@@ -1,9 +1,21 @@
 # Litz
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/cuprite-io/litz.svg)](https://pkg.go.dev/github.com/cuprite-io/litz)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+<p align="center">
+  <b>High-performance, zero-allocation serialization library for Go.</b>
+</p>
 
-Litz is a high-performance serialization library for Go, optimized for low-latency serialization hot-paths. Litz leverages the **SBC-IPR (Segmented Block Copy & In-place Pointer Resolution)** paradigm combined with a **HIBI (Hash Index Block Inlay)** wire format to minimize parsing and allocation overhead during message processing.
+<p align="center">
+  <img src="assets/mascot.png" alt="Litz Mascot" width="300" />
+</p>
+
+<p align="center">
+  Litz is a serialization library optimized for low-latency hot-paths. It leverages the <b>SBC-IPR (Segmented Block Copy & In-place Pointer Resolution)</b> paradigm combined with a <b>HIBI (Hash Index Block Inlay)</b> wire format to minimize parsing and allocation overhead during message processing.
+</p>
+
+<p align="center">
+  <a href="https://pkg.go.dev/github.com/cuprite-io/litz"><img src="https://pkg.go.dev/badge/github.com/cuprite-io/litz.svg" alt="Go Reference" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License" /></a>
+</p>
 
 For questions regarding bug reporting, pull requests, and security policies, please refer to [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 

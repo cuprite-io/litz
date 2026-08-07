@@ -1,0 +1,11 @@
+# Binary blobs and builds
+/litz-gen
+*.test
+*.out
+*.prof
+
+# OS/IDE metadata
+.DS_Store
+.idea/
+.vscode/
+.gemini/

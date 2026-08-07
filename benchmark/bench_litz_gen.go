@@ -86,6 +86,9 @@ func MarshalMediumLitzPayload(u *MediumLitzPayload, buf []byte) ([]byte, error) 
 	totalSize := fixedSize
 
 	EmailLen := len(u.Email)
+	if totalSize+EmailLen < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
 	totalSize += EmailLen
 
 	// Ensure output buffer is aligned and large enough
@@ -121,7 +124,7 @@ func UnmarshalMediumLitzPayload(buf []byte, u *MediumLitzPayload) error {
 
 	mirror := (*mediumLitzPayloadLitzMirror)(unsafe.Pointer(&buf[0]))
 
-	if int(mirror.Email.offset) > len(buf) || mirror.Email.length < 0 || mirror.Email.length > len(buf)-int(mirror.Email.offset) {
+	if mirror.Email.offset > uintptr(len(buf)) || mirror.Email.length < 0 || mirror.Email.length > len(buf)-int(mirror.Email.offset) {
 		return litz.ErrStringOutOfBounds
 	}
 
@@ -189,16 +192,37 @@ func MarshalLargeLitzPayload(u *LargeLitzPayload, buf []byte) ([]byte, error) {
 	totalSize := fixedSize
 
 	NameLen := len(u.Name)
+	if totalSize+NameLen < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
 	totalSize += NameLen
 	NumbersLen := len(u.Numbers)
 	var NumbersDummy int64
-	totalSize += NumbersLen * int(unsafe.Sizeof(NumbersDummy))
+	NumbersSize := NumbersLen * int(unsafe.Sizeof(NumbersDummy))
+	if NumbersLen > 0 && NumbersSize/NumbersLen != int(unsafe.Sizeof(NumbersDummy)) {
+		return nil, litz.ErrSizeOverflow
+	}
+	if totalSize+NumbersSize < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
+	totalSize += NumbersSize
 	TagsLen := len(u.Tags)
-	// Slice array of string headers (16B each)
-	totalSize += TagsLen * 16
+	// Slice array of string headers (size of Go string header)
+	TagsHeaderSize := TagsLen * int(unsafe.Sizeof(""))
+	if TagsLen > 0 && TagsHeaderSize/TagsLen != int(unsafe.Sizeof("")) {
+		return nil, litz.ErrSizeOverflow
+	}
+	if totalSize+TagsHeaderSize < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
+	totalSize += TagsHeaderSize
 	// Add string backing bytes
 	for i := 0; i < TagsLen; i++ {
-		totalSize += len(u.Tags[i])
+		strLen := len(u.Tags[i])
+		if totalSize+strLen < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += strLen
 	}
 	var ChildBytes []byte
 	if u.Child != nil {
@@ -209,6 +233,9 @@ func MarshalLargeLitzPayload(u *LargeLitzPayload, buf []byte) ([]byte, error) {
 		}
 	}
 	ChildLen := len(ChildBytes)
+	if totalSize+ChildLen < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
 	totalSize += ChildLen
 
 	// Ensure output buffer is aligned and large enough
@@ -280,17 +307,17 @@ func UnmarshalLargeLitzPayload(buf []byte, u *LargeLitzPayload) error {
 
 	mirror := (*largeLitzPayloadLitzMirror)(unsafe.Pointer(&buf[0]))
 
-	if int(mirror.Name.offset) > len(buf) || mirror.Name.length < 0 || mirror.Name.length > len(buf)-int(mirror.Name.offset) {
+	if mirror.Name.offset > uintptr(len(buf)) || mirror.Name.length < 0 || mirror.Name.length > len(buf)-int(mirror.Name.offset) {
 		return litz.ErrStringOutOfBounds
 	}
 	var NumbersDummy int64
-	if int(mirror.Numbers.offset) > len(buf) || mirror.Numbers.length < 0 || mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
+	if mirror.Numbers.offset > uintptr(len(buf)) || mirror.Numbers.length < 0 || mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
 		return litz.ErrSliceOutOfBounds
 	}
-	if int(mirror.Tags.offset) > len(buf) || mirror.Tags.length < 0 || mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/16 {
+	if mirror.Tags.offset > uintptr(len(buf)) || mirror.Tags.length < 0 || mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/int(unsafe.Sizeof("")) {
 		return litz.ErrSliceOutOfBounds
 	}
-	if mirror.Child > uintptr(len(buf)) || (mirror.Child > 0 && len(buf)-int(mirror.Child) < int(unsafe.Sizeof(mediumLitzPayloadLitzMirror{}))) {
+	if mirror.Child > uintptr(len(buf)) || (mirror.Child > 0 && uintptr(len(buf))-mirror.Child < unsafe.Sizeof(mediumLitzPayloadLitzMirror{})) {
 		return litz.ErrPointerOutOfBounds
 	}
 

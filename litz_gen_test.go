@@ -86,6 +86,9 @@ func MarshalUserProfile(u *UserProfile, buf []byte) ([]byte, error) {
 	totalSize := fixedSize
 
 	NameLen := len(u.Name)
+	if totalSize+NameLen < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
 	totalSize += NameLen
 
 	// Ensure output buffer is aligned and large enough
@@ -121,7 +124,7 @@ func UnmarshalUserProfile(buf []byte, u *UserProfile) error {
 
 	mirror := (*userProfileLitzMirror)(unsafe.Pointer(&buf[0]))
 
-	if int(mirror.Name.offset) > len(buf) || mirror.Name.length < 0 || mirror.Name.length > len(buf)-int(mirror.Name.offset) {
+	if mirror.Name.offset > uintptr(len(buf)) || mirror.Name.length < 0 || mirror.Name.length > len(buf)-int(mirror.Name.offset) {
 		return litz.ErrStringOutOfBounds
 	}
 
@@ -199,24 +202,51 @@ func MarshalNestedPayload(u *NestedPayload, buf []byte) ([]byte, error) {
 		}
 	}
 	ProfileLen := len(ProfileBytes)
+	if totalSize+ProfileLen < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
 	totalSize += ProfileLen
 	MetadataBytes, MetadataType, err := litz.MarshalAny(u.Metadata)
 	if err != nil {
 		return nil, err
 	}
 	MetadataLen := len(MetadataBytes)
+	if totalSize+MetadataLen < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
 	totalSize += MetadataLen
 	TagsLen := len(u.Tags)
-	// Slice array of string headers (16B each)
-	totalSize += TagsLen * 16
+	// Slice array of string headers (size of Go string header)
+	TagsHeaderSize := TagsLen * int(unsafe.Sizeof(""))
+	if TagsLen > 0 && TagsHeaderSize/TagsLen != int(unsafe.Sizeof("")) {
+		return nil, litz.ErrSizeOverflow
+	}
+	if totalSize+TagsHeaderSize < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
+	totalSize += TagsHeaderSize
 	// Add string backing bytes
 	for i := 0; i < TagsLen; i++ {
-		totalSize += len(u.Tags[i])
+		strLen := len(u.Tags[i])
+		if totalSize+strLen < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += strLen
 	}
 	NumbersLen := len(u.Numbers)
 	var NumbersDummy int
-	totalSize += NumbersLen * int(unsafe.Sizeof(NumbersDummy))
+	NumbersSize := NumbersLen * int(unsafe.Sizeof(NumbersDummy))
+	if NumbersLen > 0 && NumbersSize/NumbersLen != int(unsafe.Sizeof(NumbersDummy)) {
+		return nil, litz.ErrSizeOverflow
+	}
+	if totalSize+NumbersSize < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
+	totalSize += NumbersSize
 	SignatureLen := len(u.Signature)
+	if totalSize+SignatureLen < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
 	totalSize += SignatureLen
 
 	// Ensure output buffer is aligned and large enough
@@ -293,20 +323,20 @@ func UnmarshalNestedPayload(buf []byte, u *NestedPayload) error {
 
 	mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[0]))
 
-	if mirror.Profile > uintptr(len(buf)) || (mirror.Profile > 0 && len(buf)-int(mirror.Profile) < int(unsafe.Sizeof(userProfileLitzMirror{}))) {
+	if mirror.Profile > uintptr(len(buf)) || (mirror.Profile > 0 && uintptr(len(buf))-mirror.Profile < unsafe.Sizeof(userProfileLitzMirror{})) {
 		return litz.ErrPointerOutOfBounds
 	}
-	if int(mirror.Metadata.offset) > len(buf) || mirror.Metadata.length < 0 || int(mirror.Metadata.length) > len(buf)-int(mirror.Metadata.offset) {
+	if mirror.Metadata.offset > uintptr(len(buf)) || mirror.Metadata.length < 0 || int(mirror.Metadata.length) > len(buf)-int(mirror.Metadata.offset) {
 		return litz.ErrStringOutOfBounds
 	}
-	if int(mirror.Tags.offset) > len(buf) || mirror.Tags.length < 0 || mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/16 {
+	if mirror.Tags.offset > uintptr(len(buf)) || mirror.Tags.length < 0 || mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/int(unsafe.Sizeof("")) {
 		return litz.ErrSliceOutOfBounds
 	}
 	var NumbersDummy int
-	if int(mirror.Numbers.offset) > len(buf) || mirror.Numbers.length < 0 || mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
+	if mirror.Numbers.offset > uintptr(len(buf)) || mirror.Numbers.length < 0 || mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
 		return litz.ErrSliceOutOfBounds
 	}
-	if int(mirror.Signature.offset) > len(buf) || mirror.Signature.length < 0 || mirror.Signature.length > len(buf)-int(mirror.Signature.offset) {
+	if mirror.Signature.offset > uintptr(len(buf)) || mirror.Signature.length < 0 || mirror.Signature.length > len(buf)-int(mirror.Signature.offset) {
 		return litz.ErrSliceOutOfBounds
 	}
 
@@ -416,6 +446,9 @@ func MarshalOuterMessage(u *OuterMessage, buf []byte) ([]byte, error) {
 		}
 	}
 	BodyLen := len(BodyBytes)
+	if totalSize+BodyLen < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
 	totalSize += BodyLen
 
 	// Ensure output buffer is aligned and large enough
@@ -452,7 +485,7 @@ func UnmarshalOuterMessage(buf []byte, u *OuterMessage) error {
 
 	mirror := (*outerMessageLitzMirror)(unsafe.Pointer(&buf[0]))
 
-	if mirror.Body > uintptr(len(buf)) || (mirror.Body > 0 && len(buf)-int(mirror.Body) < int(unsafe.Sizeof(nestedPayloadLitzMirror{}))) {
+	if mirror.Body > uintptr(len(buf)) || (mirror.Body > 0 && uintptr(len(buf))-mirror.Body < unsafe.Sizeof(nestedPayloadLitzMirror{})) {
 		return litz.ErrPointerOutOfBounds
 	}
 

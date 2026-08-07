@@ -125,6 +125,7 @@ func parseDir(dir string) (string, []StructInfo, error) {
 
 					for _, field := range structType.Fields.List {
 						if len(field.Names) == 0 {
+							log.Printf("WARNING: struct %s contains embedded struct which is currently unsupported and skipped", info.Name)
 							continue // Skip embedded fields for simplicity
 						}
 
@@ -259,26 +260,37 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 			switch f.Kind {
 			case TypeString:
 				fmt.Fprintf(&buf, "\t%sLen := len(u.%s)\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif totalSize + %sLen < totalSize { return nil, %sErrSizeOverflow }\n", f.Name, prefix)
 				fmt.Fprintf(&buf, "\ttotalSize += %sLen\n", f.Name)
 			case TypeBytes:
 				fmt.Fprintf(&buf, "\t%sLen := len(u.%s)\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif totalSize + %sLen < totalSize { return nil, %sErrSizeOverflow }\n", f.Name, prefix)
 				fmt.Fprintf(&buf, "\ttotalSize += %sLen\n", f.Name)
 			case TypeSlicePrimitive:
 				fmt.Fprintf(&buf, "\t%sLen := len(u.%s)\n", f.Name, f.Name)
 				fmt.Fprintf(&buf, "\tvar %sDummy %s\n", f.Name, f.BaseType)
-				fmt.Fprintf(&buf, "\ttotalSize += %sLen * int(unsafe.Sizeof(%sDummy))\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t%sSize := %sLen * int(unsafe.Sizeof(%sDummy))\n", f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif %sLen > 0 && %sSize / %sLen != int(unsafe.Sizeof(%sDummy)) { return nil, %sErrSizeOverflow }\n", f.Name, f.Name, f.Name, f.Name, prefix)
+				fmt.Fprintf(&buf, "\tif totalSize + %sSize < totalSize { return nil, %sErrSizeOverflow }\n", f.Name, prefix)
+				fmt.Fprintf(&buf, "\ttotalSize += %sSize\n", f.Name)
 			case TypeSliceString:
 				fmt.Fprintf(&buf, "\t%sLen := len(u.%s)\n", f.Name, f.Name)
-				buf.WriteString("\t// Slice array of string headers (16B each)\n")
-				fmt.Fprintf(&buf, "\ttotalSize += %sLen * 16\n", f.Name)
+				buf.WriteString("\t// Slice array of string headers (size of Go string header)\n")
+				fmt.Fprintf(&buf, "\t%sHeaderSize := %sLen * int(unsafe.Sizeof(\"\"))\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif %sLen > 0 && %sHeaderSize / %sLen != int(unsafe.Sizeof(\"\")) { return nil, %sErrSizeOverflow }\n", f.Name, f.Name, f.Name, prefix)
+				fmt.Fprintf(&buf, "\tif totalSize + %sHeaderSize < totalSize { return nil, %sErrSizeOverflow }\n", f.Name, prefix)
+				fmt.Fprintf(&buf, "\ttotalSize += %sHeaderSize\n", f.Name)
 				buf.WriteString("\t// Add string backing bytes\n")
 				fmt.Fprintf(&buf, "\tfor i := 0; i < %sLen; i++ {\n", f.Name)
-				fmt.Fprintf(&buf, "\t\ttotalSize += len(u.%s[i])\n", f.Name)
+				fmt.Fprintf(&buf, "\t\tstrLen := len(u.%s[i])\n", f.Name)
+				fmt.Fprintf(&buf, "\t\tif totalSize + strLen < totalSize { return nil, %sErrSizeOverflow }\n", prefix)
+				fmt.Fprintf(&buf, "\t\ttotalSize += strLen\n")
 				buf.WriteString("\t}\n")
 			case TypeAny:
 				fmt.Fprintf(&buf, "\t%sBytes, %sType, err := %sMarshalAny(u.%s)\n", f.Name, f.Name, prefix, f.Name)
 				buf.WriteString("\tif err != nil { return nil, err }\n")
 				fmt.Fprintf(&buf, "\t%sLen := len(%sBytes)\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif totalSize + %sLen < totalSize { return nil, %sErrSizeOverflow }\n", f.Name, prefix)
 				fmt.Fprintf(&buf, "\ttotalSize += %sLen\n", f.Name)
 			case TypeStructPtr:
 				fmt.Fprintf(&buf, "\tvar %sBytes []byte\n", f.Name)
@@ -288,6 +300,7 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 				buf.WriteString("\t\tif err != nil { return nil, err }\n")
 				buf.WriteString("\t}\n")
 				fmt.Fprintf(&buf, "\t%sLen := len(%sBytes)\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif totalSize + %sLen < totalSize { return nil, %sErrSizeOverflow }\n", f.Name, prefix)
 				fmt.Fprintf(&buf, "\ttotalSize += %sLen\n", f.Name)
 			}
 		}
@@ -400,29 +413,29 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		for _, f := range s.Fields {
 			switch f.Kind {
 			case TypeString:
-				fmt.Fprintf(&buf, "\tif int(mirror.%s.offset) > len(buf) || mirror.%s.length < 0 || mirror.%s.length > len(buf)-int(mirror.%s.offset) {\n", f.Name, f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 || mirror.%s.length > len(buf)-int(mirror.%s.offset) {\n", f.Name, f.Name, f.Name, f.Name)
 				fmt.Fprintf(&buf, "\t\treturn %sErrStringOutOfBounds\n", prefix)
 				buf.WriteString("\t}\n")
 			case TypeAny:
-				fmt.Fprintf(&buf, "\tif int(mirror.%s.offset) > len(buf) || mirror.%s.length < 0 || int(mirror.%s.length) > len(buf)-int(mirror.%s.offset) {\n", f.Name, f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 || int(mirror.%s.length) > len(buf)-int(mirror.%s.offset) {\n", f.Name, f.Name, f.Name, f.Name)
 				fmt.Fprintf(&buf, "\t\treturn %sErrStringOutOfBounds\n", prefix)
 				buf.WriteString("\t}\n")
 			case TypeBytes:
-				fmt.Fprintf(&buf, "\tif int(mirror.%s.offset) > len(buf) || mirror.%s.length < 0 || mirror.%s.length > len(buf)-int(mirror.%s.offset) {\n", f.Name, f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 || mirror.%s.length > len(buf)-int(mirror.%s.offset) {\n", f.Name, f.Name, f.Name, f.Name)
 				fmt.Fprintf(&buf, "\t\treturn %sErrSliceOutOfBounds\n", prefix)
 				buf.WriteString("\t}\n")
 			case TypeSlicePrimitive:
 				fmt.Fprintf(&buf, "\tvar %sDummy %s\n", f.Name, f.BaseType)
-				fmt.Fprintf(&buf, "\tif int(mirror.%s.offset) > len(buf) || mirror.%s.length < 0 || mirror.%s.length > (len(buf)-int(mirror.%s.offset))/int(unsafe.Sizeof(%sDummy)) {\n", f.Name, f.Name, f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 || mirror.%s.length > (len(buf)-int(mirror.%s.offset))/int(unsafe.Sizeof(%sDummy)) {\n", f.Name, f.Name, f.Name, f.Name, f.Name)
 				fmt.Fprintf(&buf, "\t\treturn %sErrSliceOutOfBounds\n", prefix)
 				buf.WriteString("\t}\n")
 			case TypeSliceString:
-				fmt.Fprintf(&buf, "\tif int(mirror.%s.offset) > len(buf) || mirror.%s.length < 0 || mirror.%s.length > (len(buf)-int(mirror.%s.offset))/16 {\n", f.Name, f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 || mirror.%s.length > (len(buf)-int(mirror.%s.offset))/int(unsafe.Sizeof(\"\")) {\n", f.Name, f.Name, f.Name, f.Name)
 				fmt.Fprintf(&buf, "\t\treturn %sErrSliceOutOfBounds\n", prefix)
 				buf.WriteString("\t}\n")
 			case TypeStructPtr:
 				// Secure nested bounds checks: check start offset AND full nested struct size
-				fmt.Fprintf(&buf, "\tif mirror.%s > uintptr(len(buf)) || (mirror.%s > 0 && len(buf)-int(mirror.%s) < int(unsafe.Sizeof(%s{}))) {\n", f.Name, f.Name, f.Name, getMirrorName(f.BaseType))
+				fmt.Fprintf(&buf, "\tif mirror.%s > uintptr(len(buf)) || (mirror.%s > 0 && uintptr(len(buf))-mirror.%s < unsafe.Sizeof(%s{})) {\n", f.Name, f.Name, f.Name, getMirrorName(f.BaseType))
 				fmt.Fprintf(&buf, "\t\treturn %sErrPointerOutOfBounds\n", prefix)
 				buf.WriteString("\t}\n")
 			}

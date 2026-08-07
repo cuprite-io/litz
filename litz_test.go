@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"unsafe"
 
 	"github.com/cuprite-io/litz"
 )
@@ -325,7 +326,7 @@ func TestDynamicKeysLenAndSliceType(t *testing.T) {
 	}
 }
 
-func TestGroupAFixes(t *testing.T) {
+func TestHIBIEngine_SafetyAndCorrectness(t *testing.T) {
 	// 1. Map key > 255 bytes validation
 	longKey := make([]byte, 256)
 	for i := range longKey {
@@ -371,4 +372,29 @@ func TestGroupAFixes(t *testing.T) {
 		t.Error("Expected Bool() to validate type and return false")
 	}
 }
+
+func TestGenerator_BoundsSafetyAndOverflows(t *testing.T) {
+	// Test Issue 12: Unmarshal bounds check bypass mitigation
+	profile := &UserProfile{
+		Age:    25,
+		Score:  9.5,
+		Name:   "Test User",
+		Active: true,
+	}
+	buf, err := MarshalUserProfile(profile, nil)
+	if err != nil {
+		t.Fatalf("MarshalUserProfile failed: %v", err)
+	}
+
+	// Corrupt Name.offset field (at offset 16 of the buffer mirror layout)
+	// Write MaxUint64 (0xFFFFFFFFFFFFFFFF)
+	*(*uint64)(unsafe.Pointer(&buf[16])) = ^uint64(0)
+
+	var output UserProfile
+	err = UnmarshalUserProfile(buf, &output)
+	if err == nil {
+		t.Error("Expected ErrStringOutOfBounds on corrupted offset, got nil")
+	}
+}
+
 

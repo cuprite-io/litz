@@ -12,7 +12,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.1.0"
+const Version = "v0.1.1"
 
 // HIBI Type Constants
 const (
@@ -33,6 +33,7 @@ var (
 	ErrStringOutOfBounds  = errors.New("litz.Unmarshal: string out of bounds")
 	ErrSliceOutOfBounds   = errors.New("litz.Unmarshal: slice out of bounds")
 	ErrPointerOutOfBounds = errors.New("litz.Unmarshal: nested pointer out of bounds")
+	ErrSizeOverflow       = errors.New("litz.Marshal: size integer overflow")
 	ErrInvalidHIBIType    = errors.New("litz.Dynamic: invalid type for this operation")
 )
 

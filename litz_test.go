@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/cuprite-io/litz"
@@ -386,15 +387,94 @@ func TestGenerator_BoundsSafetyAndOverflows(t *testing.T) {
 		t.Fatalf("MarshalUserProfile failed: %v", err)
 	}
 
-	// Corrupt Name.offset field (at offset 16 of the buffer mirror layout)
-	// Write MaxUint64 (0xFFFFFFFFFFFFFFFF)
-	*(*uint64)(unsafe.Pointer(&buf[16])) = ^uint64(0)
-
+	// 1. Verify format signature header check
+	corruptHeader := make([]byte, len(buf))
+	copy(corruptHeader, buf)
+	corruptHeader[0] = 'X'
 	var output UserProfile
+	err = UnmarshalUserProfile(corruptHeader, &output)
+	if err != litz.ErrInvalidHeader {
+		t.Errorf("Expected ErrInvalidHeader, got %v", err)
+	}
+
+	// 2. Corrupt Name.offset field (at offset 24: 8-byte version header + 16-byte mirror offset)
+	// Write MaxUint64 (0xFFFFFFFFFFFFFFFF)
+	*(*uint64)(unsafe.Pointer(&buf[24])) = ^uint64(0)
+
 	err = UnmarshalUserProfile(buf, &output)
 	if err == nil {
 		t.Error("Expected ErrStringOutOfBounds on corrupted offset, got nil")
 	}
 }
+
+func TestGroupCFixes(t *testing.T) {
+	// 1. time.Time round-trip in MarshalAny / Dynamic
+	now := time.Now().Round(time.Microsecond) // FNV nanosecond resolution
+	buf, valType, err := litz.MarshalAny(now)
+	if err != nil {
+		t.Fatalf("MarshalAny(time.Time) failed: %v", err)
+	}
+	if valType != litz.TypeInt {
+		t.Errorf("Expected TypeInt for time.Time, got %d", valType)
+	}
+	dyn := litz.NewDynamic(buf, valType)
+	parsedTime := time.Unix(0, dyn.Int())
+	if !parsedTime.Equal(now) {
+		t.Errorf("Expected time %v, got %v", now, parsedTime)
+	}
+
+	// 2. [16]byte UUID round-trip in MarshalAny / Dynamic
+	uuidVal := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	bufUUID, valTypeUUID, err := litz.MarshalAny(uuidVal)
+	if err != nil {
+		t.Fatalf("MarshalAny([16]byte) failed: %v", err)
+	}
+	if valTypeUUID != litz.TypeBytes {
+		t.Errorf("Expected TypeBytes for [16]byte, got %d", valTypeUUID)
+	}
+	dynUUID := litz.NewDynamic(bufUUID, valTypeUUID)
+	var outUUID [16]byte
+	copy(outUUID[:], dynUUID.Bytes())
+	if outUUID != uuidVal {
+		t.Errorf("Expected UUID %v, got %v", uuidVal, outUUID)
+	}
+
+	// 3. Reject non-string keys in maps
+	invalidMap := map[int]string{42: "hello"}
+	_, _, err = litz.MarshalAny(invalidMap)
+	if err == nil {
+		t.Error("Expected error when marshaling map with non-string keys, got nil")
+	}
+
+	// 4. Dynamic.ToMap and ToSlice round-trip
+	m := map[string]any{
+		"name": "John",
+		"age":  int64(30),
+		"tags": []any{"developer", "gopher"},
+	}
+	mapBuf, mapType, err := litz.MarshalAny(m)
+	if err != nil {
+		t.Fatalf("MarshalAny(map) failed: %v", err)
+	}
+	dynMap := litz.NewDynamic(mapBuf, mapType)
+	resMap, err := dynMap.ToMap()
+	if err != nil {
+		t.Fatalf("ToMap failed: %v", err)
+	}
+	if resMap["name"] != "John" {
+		t.Errorf("Expected name to be John, got %v", resMap["name"])
+	}
+	if resMap["age"] != int64(30) {
+		t.Errorf("Expected age to be 30, got %v", resMap["age"])
+	}
+	tagsSlice, ok := resMap["tags"].([]any)
+	if !ok {
+		t.Fatalf("Expected tags to be []any, got %T", resMap["tags"])
+	}
+	if tagsSlice[0] != "developer" || tagsSlice[1] != "gopher" {
+		t.Errorf("Unexpected tags contents: %v", tagsSlice)
+	}
+}
+
 
 

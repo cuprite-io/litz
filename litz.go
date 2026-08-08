@@ -1,3 +1,5 @@
+//go:build amd64 || arm64 || 386 || arm || wasm || mips64le || ppc64le || riscv64
+
 package litz
 
 import (
@@ -8,11 +10,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.1.1"
+const Version = "v0.1.2"
 
 // HIBI Type Constants
 const (
@@ -34,6 +37,7 @@ var (
 	ErrSliceOutOfBounds   = errors.New("litz.Unmarshal: slice out of bounds")
 	ErrPointerOutOfBounds = errors.New("litz.Unmarshal: nested pointer out of bounds")
 	ErrSizeOverflow       = errors.New("litz.Marshal: size integer overflow")
+	ErrInvalidHeader      = errors.New("litz.Unmarshal: invalid format signature or version")
 	ErrInvalidHIBIType    = errors.New("litz.Dynamic: invalid type for this operation")
 )
 
@@ -49,14 +53,19 @@ func AlignedBuffer(size int) []byte {
 
 // Pool is a wrapper around sync.Pool for reusing serialization buffers.
 type Pool struct {
-	pool sync.Pool
+	pool        sync.Pool
+	initialSize int
 }
 
-func NewPool() *Pool {
+func NewPool(initialSize int) *Pool {
+	if initialSize <= 0 {
+		initialSize = 2048
+	}
 	return &Pool{
+		initialSize: initialSize,
 		pool: sync.Pool{
 			New: func() any {
-				buf := AlignedBuffer(2048)
+				buf := AlignedBuffer(initialSize)
 				return &buf
 			},
 		},
@@ -501,6 +510,14 @@ func MarshalAny(v any) ([]byte, uint8, error) {
 		buf := AlignedBuffer(len(val))
 		copy(buf, val)
 		return buf, TypeBytes, nil
+	case time.Time:
+		buf := AlignedBuffer(8)
+		*(*int64)(unsafe.Pointer(&buf[0])) = val.UnixNano()
+		return buf, TypeInt, nil
+	case [16]byte:
+		buf := AlignedBuffer(16)
+		copy(buf, val[:])
+		return buf, TypeBytes, nil
 	case *Dynamic:
 		if val == nil {
 			return nil, TypeNull, nil
@@ -513,9 +530,12 @@ func MarshalAny(v any) ([]byte, uint8, error) {
 		// Reflection fallback for other types (e.g. slices, structs)
 		rv := reflect.ValueOf(v)
 		if rv.Kind() == reflect.Map {
+			if rv.Type().Key().Kind() != reflect.String {
+				return nil, TypeNull, fmt.Errorf("litz.MarshalAny: unsupported map key type %s (only map[string]T is supported)", rv.Type().Key().Kind())
+			}
 			m := make(map[string]any)
 			for _, key := range rv.MapKeys() {
-				m[fmt.Sprint(key.Interface())] = rv.MapIndex(key).Interface()
+				m[key.String()] = rv.MapIndex(key).Interface()
 			}
 			b, err := marshalMap(m)
 			return b, TypeMap, err
@@ -703,3 +723,66 @@ func SliceSwizzle[T any](buf []byte, offset uintptr, length int) []T {
 	}
 	return unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(&buf[0]), offset)), length)
 }
+
+// Interface converts the Dynamic value back to a standard Go interface representation.
+func (d *Dynamic) Interface() any {
+	if d.IsNil() {
+		return nil
+	}
+	switch d.valType {
+	case TypeNull:
+		return nil
+	case TypeInt:
+		return d.Int()
+	case TypeUint:
+		return d.Uint()
+	case TypeFloat:
+		return d.Float()
+	case TypeBool:
+		return d.Bool()
+	case TypeString:
+		return d.String()
+	case TypeBytes:
+		return d.Bytes()
+	case TypeMap:
+		keys := d.Keys()
+		m := make(map[string]any, len(keys))
+		for _, k := range keys {
+			val := d.Get(k)
+			if val != nil {
+				m[k] = val.Interface()
+			}
+		}
+		return m
+	case TypeSlice:
+		elements := d.Slice()
+		s := make([]any, len(elements))
+		for i, el := range elements {
+			if el != nil {
+				s[i] = el.Interface()
+			}
+		}
+		return s
+	default:
+		return nil
+	}
+}
+
+// ToMap converts the Dynamic object back to a standard Go map[string]any.
+// Returns an error if the underlying value is not a HIBI map.
+func (d *Dynamic) ToMap() (map[string]any, error) {
+	if d.IsNil() || d.valType != TypeMap {
+		return nil, fmt.Errorf("litz.Dynamic: value type %d is not a map", d.valType)
+	}
+	return d.Interface().(map[string]any), nil
+}
+
+// ToSlice converts the Dynamic object back to a standard Go []any.
+// Returns an error if the underlying value is not a HIBI slice.
+func (d *Dynamic) ToSlice() ([]any, error) {
+	if d.IsNil() || d.valType != TypeSlice {
+		return nil, fmt.Errorf("litz.Dynamic: value type %d is not a slice", d.valType)
+	}
+	return d.Interface().([]any), nil
+}
+

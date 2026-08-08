@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.1.2"
+const Version = "v0.1.3"
 
 // HIBI Type Constants
 const (
@@ -110,6 +110,7 @@ type Dynamic struct {
 	valType uint8
 }
 
+// NewDynamic creates a new Dynamic reader wrapping the given HIBI buffer and type code.
 func NewDynamic(buf []byte, valType uint8) *Dynamic {
 	return &Dynamic{buf: buf, valType: valType}
 }
@@ -176,16 +177,22 @@ func (d *Dynamic) Keys() []string {
 // Get performs an O(log N) binary search lookup for a key inside a HIBI map.
 // Crucially, it resolves hash collisions by verifying the full key string.
 func (d *Dynamic) Get(key string) *Dynamic {
+	val, _ := d.GetOK(key)
+	return val
+}
+
+// GetOK is like Get, but also returns a boolean indicating whether the key was found.
+func (d *Dynamic) GetOK(key string) (*Dynamic, bool) {
 	if d.IsNil() || d.valType != TypeMap || len(d.buf) < 4 {
-		return nil
+		return nil, false
 	}
 	numEntries := *(*uint32)(unsafe.Pointer(&d.buf[0]))
 	if numEntries == 0 || numEntries > math.MaxInt32 {
-		return nil
+		return nil, false
 	}
 	maxEntries := (len(d.buf) - 4) / 16
 	if int(numEntries) > maxEntries {
-		return nil
+		return nil, false
 	}
 	hash := HashKey(key)
 
@@ -197,7 +204,7 @@ func (d *Dynamic) Get(key string) *Dynamic {
 		mid := (low + high) >> 1
 		entryOffset := 4 + mid*16
 		if entryOffset+16 > len(d.buf) {
-			return nil
+			return nil, false
 		}
 		entryPtr := unsafe.Pointer(&d.buf[entryOffset])
 		entryHash := *(*uint32)(entryPtr)
@@ -212,7 +219,7 @@ func (d *Dynamic) Get(key string) *Dynamic {
 			// Key is stored immediately before the value: starting at valOffset - keyLen
 			keyStart := int(valOffset) - int(keyLen)
 			if keyStart < 4 || int(valOffset) > len(d.buf) {
-				return nil
+				return nil, false
 			}
 
 			// Verify if key matches (Hash collision verification)
@@ -221,12 +228,12 @@ func (d *Dynamic) Get(key string) *Dynamic {
 				valStart := int(valOffset)
 				valEnd := valStart + int(valLength)
 				if valEnd > len(d.buf) {
-					return nil
+					return nil, false
 				}
 				return &Dynamic{
 					buf:     d.buf[valStart:valEnd],
 					valType: valType,
-				}
+				}, true
 			}
 
 			// In case of a hash collision, keys with duplicate hashes are sorted adjacent
@@ -249,7 +256,7 @@ func (d *Dynamic) Get(key string) *Dynamic {
 						return &Dynamic{
 							buf:     d.buf[int(lValOffset):lValEnd],
 							valType: lValType,
-						}
+						}, true
 					}
 				}
 			}
@@ -275,18 +282,18 @@ func (d *Dynamic) Get(key string) *Dynamic {
 						return &Dynamic{
 							buf:     d.buf[int(rValOffset):rValEnd],
 							valType: rValType,
-						}
+						}, true
 					}
 				}
 			}
-			return nil
+			return nil, false
 		} else if entryHash < hash {
 			low = mid + 1
 		} else {
 			high = mid - 1
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // Int returns the value as an int64.

@@ -56,14 +56,14 @@ func UnmarshalSmallLitzPayload(buf []byte, u *SmallLitzPayload) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
-	fixedSize := int(unsafe.Sizeof(smallLitzPayloadLitzMirror{}))
-	if len(buf) < 8+fixedSize {
-		return litz.ErrBufferTooShort
-	}
-
 	mirror := (*smallLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
-	u.ID = mirror.ID
+	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
+	}
+
+	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
+		u.ID = mirror.ID
+	}
 
 	return nil
 }
@@ -149,24 +149,35 @@ func UnmarshalMediumLitzPayload(buf []byte, u *MediumLitzPayload) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
-	fixedSize := int(unsafe.Sizeof(mediumLitzPayloadLitzMirror{}))
-	if len(buf) < 8+fixedSize {
-		return litz.ErrBufferTooShort
-	}
-
 	mirror := (*mediumLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
-	if mirror.Email.offset > uintptr(len(buf)) || mirror.Email.length < 0 || mirror.Email.length > len(buf)-int(mirror.Email.offset) {
-		return litz.ErrStringOutOfBounds
+	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
+	}
+	if 8+unsafe.Offsetof(mirror.Email)+unsafe.Sizeof(mirror.Email) <= uintptr(len(buf)) {
+		if mirror.Email.offset > uintptr(len(buf)) || mirror.Email.length < 0 || mirror.Email.length > len(buf)-int(mirror.Email.offset) {
+			return litz.ErrStringOutOfBounds
+		}
+	}
+	if 8+unsafe.Offsetof(mirror.Active)+unsafe.Sizeof(mirror.Active) <= uintptr(len(buf)) {
+	}
+	if 8+unsafe.Offsetof(mirror.Clicks)+unsafe.Sizeof(mirror.Clicks) <= uintptr(len(buf)) {
 	}
 
-	u.ID = mirror.ID
-	u.Active = mirror.Active
-	u.Clicks = mirror.Clicks
-	if mirror.Email.length > 0 {
-		u.Email = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Email.offset)), mirror.Email.length)
-	} else {
-		u.Email = ""
+	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
+		u.ID = mirror.ID
+	}
+	if 8+unsafe.Offsetof(mirror.Active)+unsafe.Sizeof(mirror.Active) <= uintptr(len(buf)) {
+		u.Active = mirror.Active
+	}
+	if 8+unsafe.Offsetof(mirror.Clicks)+unsafe.Sizeof(mirror.Clicks) <= uintptr(len(buf)) {
+		u.Clicks = mirror.Clicks
+	}
+	if 8+unsafe.Offsetof(mirror.Email)+unsafe.Sizeof(mirror.Email) <= uintptr(len(buf)) {
+		if mirror.Email.length > 0 {
+			u.Email = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Email.offset)), mirror.Email.length)
+		} else {
+			u.Email = ""
+		}
 	}
 
 	return nil
@@ -347,74 +358,93 @@ func UnmarshalLargeLitzPayload(buf []byte, u *LargeLitzPayload) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
-	fixedSize := int(unsafe.Sizeof(largeLitzPayloadLitzMirror{}))
-	if len(buf) < 8+fixedSize {
-		return litz.ErrBufferTooShort
-	}
-
 	mirror := (*largeLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
-	if mirror.Name.offset > uintptr(len(buf)) || mirror.Name.length < 0 || mirror.Name.length > len(buf)-int(mirror.Name.offset) {
-		return litz.ErrStringOutOfBounds
+	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
 	}
-	var NumbersDummy int64
-	if mirror.Numbers.offset > uintptr(len(buf)) || mirror.Numbers.length < 0 || mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
-		return litz.ErrSliceOutOfBounds
-	}
-	if mirror.Tags.offset > uintptr(len(buf)) || mirror.Tags.length < 0 || mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/int(unsafe.Sizeof("")) {
-		return litz.ErrSliceOutOfBounds
-	}
-	if mirror.Child > uintptr(len(buf)) || (mirror.Child > 0 && uintptr(len(buf))-mirror.Child < unsafe.Sizeof(mediumLitzPayloadLitzMirror{})) {
-		return litz.ErrPointerOutOfBounds
-	}
-
-	u.ID = mirror.ID
-	u.Active = mirror.Active
-	if mirror.Name.length > 0 {
-		u.Name = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Name.offset)), mirror.Name.length)
-	} else {
-		u.Name = ""
-	}
-	if mirror.Numbers.length > 0 {
-		u.Numbers = unsafe.Slice((*int64)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Numbers.offset)), mirror.Numbers.length)
-	} else {
-		u.Numbers = nil
-	}
-	if mirror.Tags.length > 0 {
-		strHeaders := unsafe.Slice((*struct {
-			offset uintptr
-			length int
-		})(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Tags.offset)), mirror.Tags.length)
-		maxExtent := 0
-		for i := 0; i < len(strHeaders); i++ {
-			endOffset := int(strHeaders[i].offset) + strHeaders[i].length
-			if endOffset > maxExtent {
-				maxExtent = endOffset
-			}
-		}
-		if maxExtent > len(buf) {
+	if 8+unsafe.Offsetof(mirror.Name)+unsafe.Sizeof(mirror.Name) <= uintptr(len(buf)) {
+		if mirror.Name.offset > uintptr(len(buf)) || mirror.Name.length < 0 || mirror.Name.length > len(buf)-int(mirror.Name.offset) {
 			return litz.ErrStringOutOfBounds
 		}
-		slice := make([]string, len(strHeaders))
-		for i := 0; i < len(strHeaders); i++ {
-			if strHeaders[i].length > 0 {
-				slice[i] = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), strHeaders[i].offset)), strHeaders[i].length)
-			}
-		}
-		u.Tags = slice
-	} else {
-		u.Tags = nil
 	}
-	if mirror.Child > 0 {
-		if u.Child == nil {
-			u.Child = new(MediumLitzPayload)
+	if 8+unsafe.Offsetof(mirror.Active)+unsafe.Sizeof(mirror.Active) <= uintptr(len(buf)) {
+	}
+	if 8+unsafe.Offsetof(mirror.Numbers)+unsafe.Sizeof(mirror.Numbers) <= uintptr(len(buf)) {
+		var NumbersDummy int64
+		if mirror.Numbers.offset > uintptr(len(buf)) || mirror.Numbers.length < 0 || mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
+			return litz.ErrSliceOutOfBounds
 		}
-		err := UnmarshalMediumLitzPayload(buf[mirror.Child:], u.Child)
-		if err != nil {
-			return err
+	}
+	if 8+unsafe.Offsetof(mirror.Tags)+unsafe.Sizeof(mirror.Tags) <= uintptr(len(buf)) {
+		if mirror.Tags.offset > uintptr(len(buf)) || mirror.Tags.length < 0 || mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/int(unsafe.Sizeof("")) {
+			return litz.ErrSliceOutOfBounds
 		}
-	} else {
-		u.Child = nil
+	}
+	if 8+unsafe.Offsetof(mirror.Child)+unsafe.Sizeof(mirror.Child) <= uintptr(len(buf)) {
+		if mirror.Child > uintptr(len(buf)) || (mirror.Child > 0 && uintptr(len(buf))-mirror.Child < unsafe.Sizeof(mediumLitzPayloadLitzMirror{})) {
+			return litz.ErrPointerOutOfBounds
+		}
+	}
+
+	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
+		u.ID = mirror.ID
+	}
+	if 8+unsafe.Offsetof(mirror.Active)+unsafe.Sizeof(mirror.Active) <= uintptr(len(buf)) {
+		u.Active = mirror.Active
+	}
+	if 8+unsafe.Offsetof(mirror.Name)+unsafe.Sizeof(mirror.Name) <= uintptr(len(buf)) {
+		if mirror.Name.length > 0 {
+			u.Name = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Name.offset)), mirror.Name.length)
+		} else {
+			u.Name = ""
+		}
+	}
+	if 8+unsafe.Offsetof(mirror.Numbers)+unsafe.Sizeof(mirror.Numbers) <= uintptr(len(buf)) {
+		if mirror.Numbers.length > 0 {
+			u.Numbers = unsafe.Slice((*int64)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Numbers.offset)), mirror.Numbers.length)
+		} else {
+			u.Numbers = nil
+		}
+	}
+	if 8+unsafe.Offsetof(mirror.Tags)+unsafe.Sizeof(mirror.Tags) <= uintptr(len(buf)) {
+		if mirror.Tags.length > 0 {
+			strHeaders := unsafe.Slice((*struct {
+				offset uintptr
+				length int
+			})(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Tags.offset)), mirror.Tags.length)
+			maxExtent := 0
+			for i := 0; i < len(strHeaders); i++ {
+				endOffset := int(strHeaders[i].offset) + strHeaders[i].length
+				if endOffset > maxExtent {
+					maxExtent = endOffset
+				}
+			}
+			if maxExtent > len(buf) {
+				return litz.ErrStringOutOfBounds
+			}
+			slice := make([]string, len(strHeaders))
+			for i := 0; i < len(strHeaders); i++ {
+				if strHeaders[i].length > 0 {
+					slice[i] = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), strHeaders[i].offset)), strHeaders[i].length)
+				}
+			}
+			u.Tags = slice
+		} else {
+			u.Tags = nil
+		}
+	}
+	if 8+unsafe.Offsetof(mirror.Child)+unsafe.Sizeof(mirror.Child) <= uintptr(len(buf)) {
+		if mirror.Child > 0 {
+			if u.Child == nil {
+				u.Child = new(MediumLitzPayload)
+			}
+			err := UnmarshalMediumLitzPayload(buf[mirror.Child:], u.Child)
+			if err != nil {
+				return err
+			}
+		} else {
+			u.Child = nil
+		}
 	}
 
 	return nil

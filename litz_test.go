@@ -476,5 +476,41 @@ func TestGroupCFixes(t *testing.T) {
 	}
 }
 
+func TestSchemaEvolution_BackwardCompatibility(t *testing.T) {
+	// Simulate an older serialized payload of UserProfile that only contains Age and Score.
+	// 8-byte version header + 4-byte Age + 4-byte padding + 8-byte Score = 24 bytes.
+	buf := make([]byte, 24)
+
+	// Format signature and version
+	*(*[4]byte)(unsafe.Pointer(&buf[0])) = [4]byte{'L', 'T', 'Z', '0'}
+	buf[4] = 1 // Version 1
+
+	// Set Age = 42 (Age starts at mirror offset 8)
+	*(*uint32)(unsafe.Pointer(&buf[8])) = 42
+
+	// Set Score = 3.14 (Score starts at mirror offset 16)
+	*(*float64)(unsafe.Pointer(&buf[16])) = 3.14
+
+	var output UserProfile
+	err := UnmarshalUserProfile(buf, &output)
+	if err != nil {
+		t.Fatalf("Expected UnmarshalUserProfile to succeed on shorter old payload, got: %v", err)
+	}
+
+	if output.Age != 42 {
+		t.Errorf("Expected Age = 42, got %d", output.Age)
+	}
+	if output.Score != 3.14 {
+		t.Errorf("Expected Score = 3.14, got %f", output.Score)
+	}
+	if output.Name != "" {
+		t.Errorf("Expected Name to be empty default, got %q", output.Name)
+	}
+	if output.Active != false {
+		t.Errorf("Expected Active to be false default, got %t", output.Active)
+	}
+}
+
+
 
 

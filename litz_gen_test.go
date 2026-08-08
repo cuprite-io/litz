@@ -56,14 +56,14 @@ func UnmarshalSingleKey(buf []byte, u *SingleKey) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
-	fixedSize := int(unsafe.Sizeof(singleKeyLitzMirror{}))
-	if len(buf) < 8+fixedSize {
-		return litz.ErrBufferTooShort
-	}
-
 	mirror := (*singleKeyLitzMirror)(unsafe.Pointer(&buf[8]))
 
-	u.ID = mirror.ID
+	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
+	}
+
+	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
+		u.ID = mirror.ID
+	}
 
 	return nil
 }
@@ -149,24 +149,35 @@ func UnmarshalUserProfile(buf []byte, u *UserProfile) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
-	fixedSize := int(unsafe.Sizeof(userProfileLitzMirror{}))
-	if len(buf) < 8+fixedSize {
-		return litz.ErrBufferTooShort
-	}
-
 	mirror := (*userProfileLitzMirror)(unsafe.Pointer(&buf[8]))
 
-	if mirror.Name.offset > uintptr(len(buf)) || mirror.Name.length < 0 || mirror.Name.length > len(buf)-int(mirror.Name.offset) {
-		return litz.ErrStringOutOfBounds
+	if 8+unsafe.Offsetof(mirror.Age)+unsafe.Sizeof(mirror.Age) <= uintptr(len(buf)) {
+	}
+	if 8+unsafe.Offsetof(mirror.Score)+unsafe.Sizeof(mirror.Score) <= uintptr(len(buf)) {
+	}
+	if 8+unsafe.Offsetof(mirror.Name)+unsafe.Sizeof(mirror.Name) <= uintptr(len(buf)) {
+		if mirror.Name.offset > uintptr(len(buf)) || mirror.Name.length < 0 || mirror.Name.length > len(buf)-int(mirror.Name.offset) {
+			return litz.ErrStringOutOfBounds
+		}
+	}
+	if 8+unsafe.Offsetof(mirror.Active)+unsafe.Sizeof(mirror.Active) <= uintptr(len(buf)) {
 	}
 
-	u.Age = mirror.Age
-	u.Score = mirror.Score
-	u.Active = mirror.Active
-	if mirror.Name.length > 0 {
-		u.Name = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Name.offset)), mirror.Name.length)
-	} else {
-		u.Name = ""
+	if 8+unsafe.Offsetof(mirror.Age)+unsafe.Sizeof(mirror.Age) <= uintptr(len(buf)) {
+		u.Age = mirror.Age
+	}
+	if 8+unsafe.Offsetof(mirror.Score)+unsafe.Sizeof(mirror.Score) <= uintptr(len(buf)) {
+		u.Score = mirror.Score
+	}
+	if 8+unsafe.Offsetof(mirror.Active)+unsafe.Sizeof(mirror.Active) <= uintptr(len(buf)) {
+		u.Active = mirror.Active
+	}
+	if 8+unsafe.Offsetof(mirror.Name)+unsafe.Sizeof(mirror.Name) <= uintptr(len(buf)) {
+		if mirror.Name.length > 0 {
+			u.Name = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Name.offset)), mirror.Name.length)
+		} else {
+			u.Name = ""
+		}
 	}
 
 	return nil
@@ -363,80 +374,95 @@ func UnmarshalNestedPayload(buf []byte, u *NestedPayload) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
-	fixedSize := int(unsafe.Sizeof(nestedPayloadLitzMirror{}))
-	if len(buf) < 8+fixedSize {
-		return litz.ErrBufferTooShort
-	}
-
 	mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
-	if mirror.Profile > uintptr(len(buf)) || (mirror.Profile > 0 && uintptr(len(buf))-mirror.Profile < unsafe.Sizeof(userProfileLitzMirror{})) {
-		return litz.ErrPointerOutOfBounds
-	}
-	if mirror.Metadata.offset > uintptr(len(buf)) || mirror.Metadata.length < 0 || int(mirror.Metadata.length) > len(buf)-int(mirror.Metadata.offset) {
-		return litz.ErrStringOutOfBounds
-	}
-	if mirror.Tags.offset > uintptr(len(buf)) || mirror.Tags.length < 0 || mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/int(unsafe.Sizeof("")) {
-		return litz.ErrSliceOutOfBounds
-	}
-	var NumbersDummy int
-	if mirror.Numbers.offset > uintptr(len(buf)) || mirror.Numbers.length < 0 || mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
-		return litz.ErrSliceOutOfBounds
-	}
-	if mirror.Signature.offset > uintptr(len(buf)) || mirror.Signature.length < 0 || mirror.Signature.length > len(buf)-int(mirror.Signature.offset) {
-		return litz.ErrSliceOutOfBounds
-	}
-
-	if mirror.Profile > 0 {
-		if u.Profile == nil {
-			u.Profile = new(UserProfile)
+	if 8+unsafe.Offsetof(mirror.Profile)+unsafe.Sizeof(mirror.Profile) <= uintptr(len(buf)) {
+		if mirror.Profile > uintptr(len(buf)) || (mirror.Profile > 0 && uintptr(len(buf))-mirror.Profile < unsafe.Sizeof(userProfileLitzMirror{})) {
+			return litz.ErrPointerOutOfBounds
 		}
-		err := UnmarshalUserProfile(buf[mirror.Profile:], u.Profile)
-		if err != nil {
-			return err
-		}
-	} else {
-		u.Profile = nil
 	}
-	if mirror.Metadata.length > 0 {
-		u.Metadata = litz.NewDynamic(buf[mirror.Metadata.offset:mirror.Metadata.offset+uintptr(mirror.Metadata.length)], uint8(mirror.Metadata.valType))
-	} else {
-		u.Metadata = nil
-	}
-	if mirror.Tags.length > 0 {
-		strHeaders := unsafe.Slice((*struct {
-			offset uintptr
-			length int
-		})(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Tags.offset)), mirror.Tags.length)
-		maxExtent := 0
-		for i := 0; i < len(strHeaders); i++ {
-			endOffset := int(strHeaders[i].offset) + strHeaders[i].length
-			if endOffset > maxExtent {
-				maxExtent = endOffset
-			}
-		}
-		if maxExtent > len(buf) {
+	if 8+unsafe.Offsetof(mirror.Metadata)+unsafe.Sizeof(mirror.Metadata) <= uintptr(len(buf)) {
+		if mirror.Metadata.offset > uintptr(len(buf)) || mirror.Metadata.length < 0 || int(mirror.Metadata.length) > len(buf)-int(mirror.Metadata.offset) {
 			return litz.ErrStringOutOfBounds
 		}
-		slice := make([]string, len(strHeaders))
-		for i := 0; i < len(strHeaders); i++ {
-			if strHeaders[i].length > 0 {
-				slice[i] = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), strHeaders[i].offset)), strHeaders[i].length)
-			}
+	}
+	if 8+unsafe.Offsetof(mirror.Tags)+unsafe.Sizeof(mirror.Tags) <= uintptr(len(buf)) {
+		if mirror.Tags.offset > uintptr(len(buf)) || mirror.Tags.length < 0 || mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/int(unsafe.Sizeof("")) {
+			return litz.ErrSliceOutOfBounds
 		}
-		u.Tags = slice
-	} else {
-		u.Tags = nil
 	}
-	if mirror.Numbers.length > 0 {
-		u.Numbers = unsafe.Slice((*int)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Numbers.offset)), mirror.Numbers.length)
-	} else {
-		u.Numbers = nil
+	if 8+unsafe.Offsetof(mirror.Numbers)+unsafe.Sizeof(mirror.Numbers) <= uintptr(len(buf)) {
+		var NumbersDummy int
+		if mirror.Numbers.offset > uintptr(len(buf)) || mirror.Numbers.length < 0 || mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
+			return litz.ErrSliceOutOfBounds
+		}
 	}
-	if mirror.Signature.length > 0 {
-		u.Signature = unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Signature.offset)), mirror.Signature.length)
-	} else {
-		u.Signature = nil
+	if 8+unsafe.Offsetof(mirror.Signature)+unsafe.Sizeof(mirror.Signature) <= uintptr(len(buf)) {
+		if mirror.Signature.offset > uintptr(len(buf)) || mirror.Signature.length < 0 || mirror.Signature.length > len(buf)-int(mirror.Signature.offset) {
+			return litz.ErrSliceOutOfBounds
+		}
+	}
+
+	if 8+unsafe.Offsetof(mirror.Profile)+unsafe.Sizeof(mirror.Profile) <= uintptr(len(buf)) {
+		if mirror.Profile > 0 {
+			if u.Profile == nil {
+				u.Profile = new(UserProfile)
+			}
+			err := UnmarshalUserProfile(buf[mirror.Profile:], u.Profile)
+			if err != nil {
+				return err
+			}
+		} else {
+			u.Profile = nil
+		}
+	}
+	if 8+unsafe.Offsetof(mirror.Metadata)+unsafe.Sizeof(mirror.Metadata) <= uintptr(len(buf)) {
+		if mirror.Metadata.length > 0 {
+			u.Metadata = litz.NewDynamic(buf[mirror.Metadata.offset:mirror.Metadata.offset+uintptr(mirror.Metadata.length)], uint8(mirror.Metadata.valType))
+		} else {
+			u.Metadata = nil
+		}
+	}
+	if 8+unsafe.Offsetof(mirror.Tags)+unsafe.Sizeof(mirror.Tags) <= uintptr(len(buf)) {
+		if mirror.Tags.length > 0 {
+			strHeaders := unsafe.Slice((*struct {
+				offset uintptr
+				length int
+			})(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Tags.offset)), mirror.Tags.length)
+			maxExtent := 0
+			for i := 0; i < len(strHeaders); i++ {
+				endOffset := int(strHeaders[i].offset) + strHeaders[i].length
+				if endOffset > maxExtent {
+					maxExtent = endOffset
+				}
+			}
+			if maxExtent > len(buf) {
+				return litz.ErrStringOutOfBounds
+			}
+			slice := make([]string, len(strHeaders))
+			for i := 0; i < len(strHeaders); i++ {
+				if strHeaders[i].length > 0 {
+					slice[i] = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), strHeaders[i].offset)), strHeaders[i].length)
+				}
+			}
+			u.Tags = slice
+		} else {
+			u.Tags = nil
+		}
+	}
+	if 8+unsafe.Offsetof(mirror.Numbers)+unsafe.Sizeof(mirror.Numbers) <= uintptr(len(buf)) {
+		if mirror.Numbers.length > 0 {
+			u.Numbers = unsafe.Slice((*int)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Numbers.offset)), mirror.Numbers.length)
+		} else {
+			u.Numbers = nil
+		}
+	}
+	if 8+unsafe.Offsetof(mirror.Signature)+unsafe.Sizeof(mirror.Signature) <= uintptr(len(buf)) {
+		if mirror.Signature.length > 0 {
+			u.Signature = unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Signature.offset)), mirror.Signature.length)
+		} else {
+			u.Signature = nil
+		}
 	}
 
 	return nil
@@ -540,28 +566,31 @@ func UnmarshalOuterMessage(buf []byte, u *OuterMessage) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
-	fixedSize := int(unsafe.Sizeof(outerMessageLitzMirror{}))
-	if len(buf) < 8+fixedSize {
-		return litz.ErrBufferTooShort
-	}
-
 	mirror := (*outerMessageLitzMirror)(unsafe.Pointer(&buf[8]))
 
-	if mirror.Body > uintptr(len(buf)) || (mirror.Body > 0 && uintptr(len(buf))-mirror.Body < unsafe.Sizeof(nestedPayloadLitzMirror{})) {
-		return litz.ErrPointerOutOfBounds
+	if 8+unsafe.Offsetof(mirror.SeqNum)+unsafe.Sizeof(mirror.SeqNum) <= uintptr(len(buf)) {
+	}
+	if 8+unsafe.Offsetof(mirror.Body)+unsafe.Sizeof(mirror.Body) <= uintptr(len(buf)) {
+		if mirror.Body > uintptr(len(buf)) || (mirror.Body > 0 && uintptr(len(buf))-mirror.Body < unsafe.Sizeof(nestedPayloadLitzMirror{})) {
+			return litz.ErrPointerOutOfBounds
+		}
 	}
 
-	u.SeqNum = mirror.SeqNum
-	if mirror.Body > 0 {
-		if u.Body == nil {
-			u.Body = new(NestedPayload)
+	if 8+unsafe.Offsetof(mirror.SeqNum)+unsafe.Sizeof(mirror.SeqNum) <= uintptr(len(buf)) {
+		u.SeqNum = mirror.SeqNum
+	}
+	if 8+unsafe.Offsetof(mirror.Body)+unsafe.Sizeof(mirror.Body) <= uintptr(len(buf)) {
+		if mirror.Body > 0 {
+			if u.Body == nil {
+				u.Body = new(NestedPayload)
+			}
+			err := UnmarshalNestedPayload(buf[mirror.Body:], u.Body)
+			if err != nil {
+				return err
+			}
+		} else {
+			u.Body = nil
 		}
-		err := UnmarshalNestedPayload(buf[mirror.Body:], u.Body)
-		if err != nil {
-			return err
-		}
-	} else {
-		u.Body = nil
 	}
 
 	return nil

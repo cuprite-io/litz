@@ -511,6 +511,38 @@ func TestSchemaEvolution_BackwardCompatibility(t *testing.T) {
 	}
 }
 
+func FuzzUnmarshalUserProfile(f *testing.F) {
+	// Seed corpus with a valid payload
+	profile := &UserProfile{
+		Age:    25,
+		Score:  9.5,
+		Name:   "Test User",
+		Active: true,
+	}
+	buf, err := MarshalUserProfile(profile, nil)
+	if err == nil {
+		f.Add(buf)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var output UserProfile
+		_ = UnmarshalUserProfile(data, &output)
+	})
+}
+
+func FuzzUnmarshalSingleKey(f *testing.F) {
+	single := &SingleKey{ID: 100}
+	buf, err := MarshalSingleKey(single, nil)
+	if err == nil {
+		f.Add(buf)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var output SingleKey
+		_ = UnmarshalSingleKey(data, &output)
+	})
+}
+
 
 
 

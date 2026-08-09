@@ -209,7 +209,7 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 	buf.WriteString("\t\"strings\"\n")
 	buf.WriteString("\t\"unsafe\"\n")
 	if pkgName != "litz" {
-		buf.WriteString("\t\"github.com/cuprite-io/litz\"\n")
+		buf.WriteString("\n\t\"github.com/cuprite-io/litz\"\n")
 	}
 	buf.WriteString(")\n\n")
 

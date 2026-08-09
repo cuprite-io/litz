@@ -4,9 +4,10 @@
 package litz_test
 
 import (
-	"github.com/cuprite-io/litz"
 	"strings"
 	"unsafe"
+
+	"github.com/cuprite-io/litz"
 )
 
 // singleKeyLitzMirror is the GC-safe layout mirror for SingleKey

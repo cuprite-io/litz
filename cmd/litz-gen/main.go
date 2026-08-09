@@ -27,11 +27,11 @@ const (
 )
 
 type FieldInfo struct {
-	Name      string
-	TypeStr   string
-	BaseType  string // Used for slices e.g. "int" for "[]int"
-	Kind      FieldType
-	Size      int    // size of primitive type in bytes
+	Name     string
+	TypeStr  string
+	BaseType string // Used for slices e.g. "int" for "[]int"
+	Kind     FieldType
+	Size     int // size of primitive type in bytes
 }
 
 type StructInfo struct {
@@ -57,6 +57,21 @@ func main() {
 	if len(structs) == 0 {
 		fmt.Printf("No structs marked with //litz:generate found in %s\n", absDir)
 		return
+	}
+
+	// Validate that nested struct fields also have //litz:generate
+	structMap := make(map[string]bool)
+	for _, s := range structs {
+		structMap[s.Name] = true
+	}
+	for _, s := range structs {
+		for _, f := range s.Fields {
+			if f.Kind == TypeStructPtr {
+				if !structMap[f.BaseType] {
+					log.Printf("WARNING: struct %s references %s, but %s is not marked with //litz:generate. This will cause compilation errors in generated code.", s.Name, f.BaseType, f.BaseType)
+				}
+			}
+		}
 	}
 
 	code, err := generateCode(packageName, structs)
@@ -319,7 +334,7 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		buf.WriteString("\tbuf[7] = 0\n\n")
 
 		buf.WriteString("\t// Write directly to the buffer's mirror pointer (O1 Optimization: No stack allocation/double-copy!)\n")
-		buf.WriteString("\t// Zero the fixed size header to prevent padding data leaks (Issue 1)\n")
+		buf.WriteString("\t// Zero the fixed size header to prevent padding data leaks\n")
 		fmt.Fprintf(&buf, "\t*(*%s)(unsafe.Pointer(&buf[8])) = %s{}\n", mirrorName, mirrorName)
 		fmt.Fprintf(&buf, "\tmirror := (*%s)(unsafe.Pointer(&buf[8]))\n\n", mirrorName)
 

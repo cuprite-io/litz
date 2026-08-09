@@ -39,7 +39,7 @@ func MarshalSmallLitzPayload(u *SmallLitzPayload, buf []byte) ([]byte, error) {
 	buf[7] = 0
 
 	// Write directly to the buffer's mirror pointer (O1 Optimization: No stack allocation/double-copy!)
-	// Zero the fixed size header to prevent padding data leaks (Issue 1)
+	// Zero the fixed size header to prevent padding data leaks
 	*(*smallLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8])) = smallLitzPayloadLitzMirror{}
 	mirror := (*smallLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
@@ -123,7 +123,7 @@ func MarshalMediumLitzPayload(u *MediumLitzPayload, buf []byte) ([]byte, error) 
 	buf[7] = 0
 
 	// Write directly to the buffer's mirror pointer (O1 Optimization: No stack allocation/double-copy!)
-	// Zero the fixed size header to prevent padding data leaks (Issue 1)
+	// Zero the fixed size header to prevent padding data leaks
 	*(*mediumLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8])) = mediumLitzPayloadLitzMirror{}
 	mirror := (*mediumLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
@@ -296,7 +296,7 @@ func MarshalLargeLitzPayload(u *LargeLitzPayload, buf []byte) ([]byte, error) {
 	buf[7] = 0
 
 	// Write directly to the buffer's mirror pointer (O1 Optimization: No stack allocation/double-copy!)
-	// Zero the fixed size header to prevent padding data leaks (Issue 1)
+	// Zero the fixed size header to prevent padding data leaks
 	*(*largeLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8])) = largeLitzPayloadLitzMirror{}
 	mirror := (*largeLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 

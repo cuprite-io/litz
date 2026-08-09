@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.1.4"
+const Version = "v0.1.5"
 
 // HIBI Type Constants
 const (
@@ -41,7 +41,7 @@ var (
 	ErrInvalidHIBIType    = errors.New("litz.Dynamic: invalid type for this operation")
 )
 
-// AlignedBuffer allocates a byte slice. Go's runtime allocator aligns heap 
+// AlignedBuffer allocates a byte slice. Go's runtime allocator aligns heap
 // allocations to 8-byte boundaries automatically for sizes >= 8 bytes.
 func AlignedBuffer(size int) []byte {
 	if size <= 0 {
@@ -86,8 +86,14 @@ func (p *Pool) Get(minSize int) *[]byte {
 	return bufPtr
 }
 
+// Put returns a buffer back to the pool.
+// To prevent memory bloat during massive payload spikes, buffers with capacity
+// larger than 16MB are discarded rather than returned to the pool.
+// Note: We accept and return *[]byte (pointer to slice header) rather than []byte
+// to prevent the Go runtime from allocating interface boxing containers on sync.Pool.Put,
+// maintaining true zero-allocation execution on recycled paths.
 func (p *Pool) Put(bufPtr *[]byte) {
-	if bufPtr == nil {
+	if bufPtr == nil || cap(*bufPtr) > 16*1024*1024 {
 		return
 	}
 	p.pool.Put(bufPtr)
@@ -585,7 +591,7 @@ func marshalMap(m map[string]any) ([]byte, error) {
 		return elements[i].hash < elements[j].hash
 	})
 
-	if numEntries > (math.MaxInt - 4) / 16 {
+	if numEntries > (math.MaxInt-4)/16 {
 		return nil, errors.New("litz.marshalMap: map size overflows maximum elements")
 	}
 	indexSize := 4 + numEntries*16
@@ -792,4 +798,3 @@ func (d *Dynamic) ToSlice() ([]any, error) {
 	}
 	return d.Interface().([]any), nil
 }
-

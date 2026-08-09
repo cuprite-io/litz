@@ -39,7 +39,7 @@ func MarshalSingleKey(u *SingleKey, buf []byte) ([]byte, error) {
 	buf[7] = 0
 
 	// Write directly to the buffer's mirror pointer (O1 Optimization: No stack allocation/double-copy!)
-	// Zero the fixed size header to prevent padding data leaks (Issue 1)
+	// Zero the fixed size header to prevent padding data leaks
 	*(*singleKeyLitzMirror)(unsafe.Pointer(&buf[8])) = singleKeyLitzMirror{}
 	mirror := (*singleKeyLitzMirror)(unsafe.Pointer(&buf[8]))
 
@@ -123,7 +123,7 @@ func MarshalUserProfile(u *UserProfile, buf []byte) ([]byte, error) {
 	buf[7] = 0
 
 	// Write directly to the buffer's mirror pointer (O1 Optimization: No stack allocation/double-copy!)
-	// Zero the fixed size header to prevent padding data leaks (Issue 1)
+	// Zero the fixed size header to prevent padding data leaks
 	*(*userProfileLitzMirror)(unsafe.Pointer(&buf[8])) = userProfileLitzMirror{}
 	mirror := (*userProfileLitzMirror)(unsafe.Pointer(&buf[8]))
 
@@ -307,7 +307,7 @@ func MarshalNestedPayload(u *NestedPayload, buf []byte) ([]byte, error) {
 	buf[7] = 0
 
 	// Write directly to the buffer's mirror pointer (O1 Optimization: No stack allocation/double-copy!)
-	// Zero the fixed size header to prevent padding data leaks (Issue 1)
+	// Zero the fixed size header to prevent padding data leaks
 	*(*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[8])) = nestedPayloadLitzMirror{}
 	mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
@@ -539,7 +539,7 @@ func MarshalOuterMessage(u *OuterMessage, buf []byte) ([]byte, error) {
 	buf[7] = 0
 
 	// Write directly to the buffer's mirror pointer (O1 Optimization: No stack allocation/double-copy!)
-	// Zero the fixed size header to prevent padding data leaks (Issue 1)
+	// Zero the fixed size header to prevent padding data leaks
 	*(*outerMessageLitzMirror)(unsafe.Pointer(&buf[8])) = outerMessageLitzMirror{}
 	mirror := (*outerMessageLitzMirror)(unsafe.Pointer(&buf[8]))
 

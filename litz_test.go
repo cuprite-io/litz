@@ -327,6 +327,63 @@ func TestDynamicKeysLenAndSliceType(t *testing.T) {
 	}
 }
 
+func TestDynamicGetView(t *testing.T) {
+	buf, _, err := litz.MarshalAny(map[string]any{
+		"env":   "production",
+		"count": int64(42),
+	})
+	if err != nil {
+		t.Fatalf("MarshalAny failed: %v", err)
+	}
+	dyn := litz.NewDynamic(buf, litz.TypeMap)
+
+	env, ok := dyn.GetView("env")
+	if !ok || env.Type() != litz.TypeString || env.String() != "production" {
+		t.Fatalf("GetView(env) = (%v, %t), want (production, true)", env.String(), ok)
+	}
+
+	count, ok := dyn.GetView("count")
+	if !ok || count.Type() != litz.TypeInt || count.Int() != 42 {
+		t.Fatalf("GetView(count) = (%d, %t), want (42, true)", count.Int(), ok)
+	}
+
+	if _, ok := dyn.GetView("missing"); ok {
+		t.Fatal("GetView returned a value for a missing key")
+	}
+
+	// Get and GetOK must remain behaviorally identical to GetView.
+	if got := dyn.Get("env"); got == nil || got.String() != "production" {
+		t.Fatalf("Get(env) = %v, want production", got)
+	}
+	if got, ok := dyn.GetOK("count"); !ok || got.Int() != 42 {
+		t.Fatalf("GetOK(count) = (%v, %t), want (42, true)", got, ok)
+	}
+}
+
+func TestDynamicGetViewAllocations(t *testing.T) {
+	buf, _, err := litz.MarshalAny(map[string]any{"env": "production"})
+	if err != nil {
+		t.Fatalf("MarshalAny failed: %v", err)
+	}
+	dyn := litz.NewDynamic(buf, litz.TypeMap)
+
+	var got string
+	allocs := testing.AllocsPerRun(1000, func() {
+		val, ok := dyn.GetView("env")
+		if ok {
+			got = val.String()
+		} else {
+			got = ""
+		}
+	})
+	if got != "production" {
+		t.Fatalf("GetView returned %q, want production", got)
+	}
+	if allocs != 0 {
+		t.Fatalf("GetView allocated %.1f times per lookup, want 0", allocs)
+	}
+}
+
 func TestHIBIEngine_SafetyAndCorrectness(t *testing.T) {
 	// 1. Map key > 255 bytes validation
 	longKey := make([]byte, 256)
@@ -542,7 +599,3 @@ func FuzzUnmarshalSingleKey(f *testing.F) {
 		_ = UnmarshalSingleKey(data, &output)
 	})
 }
-
-
-
-

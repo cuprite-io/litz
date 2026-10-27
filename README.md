@@ -25,6 +25,7 @@ For questions regarding bug reporting, pull requests, and security policies, ple
 
 - **Zero-Allocation Deserialization**: Resolves strings, slices, and nested structures directly pointing into the backing serialized buffer.
 - **In-Place Querying**: The HIBI wire format indexes fields by hash, allowing O(log N) binary search lookups on the byte stream via the dynamic [`litz.Dynamic`](litz.go) reader without parsing the entire payload.
+- **Allocation-Free Dynamic Lookups**: `Dynamic.GetView` returns a value view without heap allocation; `Get` and `GetOK` remain available for pointer-based call sites.
 - **Compile-Time Layout Verification**: Code generation outputs compile-time size and field-offset assertions (`unsafe.Offsetof`) to guarantee structural alignment matches exactly.
 - **Security Boundaries**: Enforces memory alignment checks and math-safe bounds comparisons to prevent buffer overflow and OOM Denial of Service (DoS) vectors.
 
@@ -125,7 +126,7 @@ func main() {
 
 	// 3. Optional: Dynamic lookup of fields without full unmarshaling
 	dyn := litz.NewDynamic(buf, litz.TypeMap)
-	if activeVal := dyn.Get("Active"); activeVal != nil {
+	if activeVal, ok := dyn.GetView("Active"); ok {
 		fmt.Printf("Dynamic Active check: %t\n", activeVal.Bool())
 	}
 }

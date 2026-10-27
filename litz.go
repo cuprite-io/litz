@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.1.5"
+const Version = "v0.1.6"
 
 // HIBI Type Constants
 const (
@@ -38,6 +38,7 @@ var (
 	ErrPointerOutOfBounds = errors.New("litz.Unmarshal: nested pointer out of bounds")
 	ErrSizeOverflow       = errors.New("litz.Marshal: size integer overflow")
 	ErrInvalidHeader      = errors.New("litz.Unmarshal: invalid format signature or version")
+	ErrChecksumMismatch   = errors.New("litz.Unmarshal: checksum validation mismatch")
 	ErrInvalidHIBIType    = errors.New("litz.Dynamic: invalid type for this operation")
 )
 
@@ -183,22 +184,40 @@ func (d *Dynamic) Keys() []string {
 // Get performs an O(log N) binary search lookup for a key inside a HIBI map.
 // Crucially, it resolves hash collisions by verifying the full key string.
 func (d *Dynamic) Get(key string) *Dynamic {
-	val, _ := d.GetOK(key)
-	return val
+	val, ok := d.GetView(key)
+	if !ok {
+		return nil
+	}
+	return &val
+}
+
+// GetView is like Get, but returns the value directly instead of a pointer.
+// The returned Dynamic is a small value that aliases the parent buffer, so it
+// performs no heap allocation and is the preferred lookup API on hot paths.
+func (d *Dynamic) GetView(key string) (Dynamic, bool) {
+	return d.getView(key)
 }
 
 // GetOK is like Get, but also returns a boolean indicating whether the key was found.
 func (d *Dynamic) GetOK(key string) (*Dynamic, bool) {
-	if d.IsNil() || d.valType != TypeMap || len(d.buf) < 4 {
+	val, ok := d.getView(key)
+	if !ok {
 		return nil, false
+	}
+	return &val, true
+}
+
+func (d *Dynamic) getView(key string) (Dynamic, bool) {
+	if d.IsNil() || d.valType != TypeMap || len(d.buf) < 4 {
+		return Dynamic{}, false
 	}
 	numEntries := *(*uint32)(unsafe.Pointer(&d.buf[0]))
 	if numEntries == 0 || numEntries > math.MaxInt32 {
-		return nil, false
+		return Dynamic{}, false
 	}
 	maxEntries := (len(d.buf) - 4) / 16
 	if int(numEntries) > maxEntries {
-		return nil, false
+		return Dynamic{}, false
 	}
 	hash := HashKey(key)
 
@@ -210,7 +229,7 @@ func (d *Dynamic) GetOK(key string) (*Dynamic, bool) {
 		mid := (low + high) >> 1
 		entryOffset := 4 + mid*16
 		if entryOffset+16 > len(d.buf) {
-			return nil, false
+			return Dynamic{}, false
 		}
 		entryPtr := unsafe.Pointer(&d.buf[entryOffset])
 		entryHash := *(*uint32)(entryPtr)
@@ -225,7 +244,7 @@ func (d *Dynamic) GetOK(key string) (*Dynamic, bool) {
 			// Key is stored immediately before the value: starting at valOffset - keyLen
 			keyStart := int(valOffset) - int(keyLen)
 			if keyStart < 4 || int(valOffset) > len(d.buf) {
-				return nil, false
+				return Dynamic{}, false
 			}
 
 			// Verify if key matches (Hash collision verification)
@@ -234,9 +253,9 @@ func (d *Dynamic) GetOK(key string) (*Dynamic, bool) {
 				valStart := int(valOffset)
 				valEnd := valStart + int(valLength)
 				if valEnd > len(d.buf) {
-					return nil, false
+					return Dynamic{}, false
 				}
-				return &Dynamic{
+				return Dynamic{
 					buf:     d.buf[valStart:valEnd],
 					valType: valType,
 				}, true
@@ -259,7 +278,7 @@ func (d *Dynamic) GetOK(key string) (*Dynamic, bool) {
 				if lKeyStart >= 4 && lValEnd <= len(d.buf) && int(lValOffset) <= lValEnd {
 					lKey := unsafe.String((*byte)(unsafe.Pointer(&d.buf[lKeyStart])), int(lKeyLen))
 					if lKey == key {
-						return &Dynamic{
+						return Dynamic{
 							buf:     d.buf[int(lValOffset):lValEnd],
 							valType: lValType,
 						}, true
@@ -285,21 +304,21 @@ func (d *Dynamic) GetOK(key string) (*Dynamic, bool) {
 				if rKeyStart >= 4 && rValEnd <= len(d.buf) && int(rValOffset) <= rValEnd {
 					rKey := unsafe.String((*byte)(unsafe.Pointer(&d.buf[rKeyStart])), int(rKeyLen))
 					if rKey == key {
-						return &Dynamic{
+						return Dynamic{
 							buf:     d.buf[int(rValOffset):rValEnd],
 							valType: rValType,
 						}, true
 					}
 				}
 			}
-			return nil, false
+			return Dynamic{}, false
 		} else if entryHash < hash {
 			low = mid + 1
 		} else {
 			high = mid - 1
 		}
 	}
-	return nil, false
+	return Dynamic{}, false
 }
 
 // Int returns the value as an int64.
@@ -739,7 +758,14 @@ func SliceSwizzle[T any](buf []byte, offset uintptr, length int) []T {
 
 // Interface converts the Dynamic value back to a standard Go interface representation.
 func (d *Dynamic) Interface() any {
-	if d.IsNil() {
+	if d == nil {
+		return nil
+	}
+	return d.interfaceValue()
+}
+
+func (d Dynamic) interfaceValue() any {
+	if len(d.buf) == 0 {
 		return nil
 	}
 	switch d.valType {
@@ -761,9 +787,8 @@ func (d *Dynamic) Interface() any {
 		keys := d.Keys()
 		m := make(map[string]any, len(keys))
 		for _, k := range keys {
-			val := d.Get(k)
-			if val != nil {
-				m[k] = val.Interface()
+			if val, ok := d.GetView(k); ok {
+				m[k] = val.interfaceValue()
 			}
 		}
 		return m
@@ -772,7 +797,7 @@ func (d *Dynamic) Interface() any {
 		s := make([]any, len(elements))
 		for i, el := range elements {
 			if el != nil {
-				s[i] = el.Interface()
+				s[i] = el.interfaceValue()
 			}
 		}
 		return s

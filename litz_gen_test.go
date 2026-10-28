@@ -33,6 +33,11 @@ func marshalSingleKeyWithDepth(u *SingleKey, buf []byte, depth int) ([]byte, err
 	fixedSize := int(unsafe.Sizeof(singleKeyLitzMirror{}))
 	totalSize := 8 + fixedSize
 
+	if totalSize+7 < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
+	totalSize = (totalSize + 7) &^ 7
+
 	// Ensure output buffer is aligned and large enough
 	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
 		buf = litz.AlignedBuffer(totalSize)
@@ -52,6 +57,9 @@ func marshalSingleKeyWithDepth(u *SingleKey, buf []byte, depth int) ([]byte, err
 	mirror := (*singleKeyLitzMirror)(unsafe.Pointer(&buf[8]))
 
 	mirror.ID = u.ID
+	if 8+fixedSize < totalSize {
+		clear(buf[8+fixedSize : totalSize])
+	}
 	return buf, nil
 }
 
@@ -68,6 +76,9 @@ func unmarshalSingleKeyWithDepth(buf []byte, u *SingleKey, depth int) error {
 	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
+	}
+	if uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {
+		return litz.ErrUnalignedBuffer
 	}
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
@@ -144,10 +155,20 @@ func marshalUserProfileWithDepth(u *UserProfile, buf []byte, depth int) ([]byte,
 	totalSize := 8 + fixedSize
 
 	NameLen := len(u.Name)
-	if totalSize+NameLen < totalSize {
+	if NameLen > 0 {
+		if totalSize+7 < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize = (totalSize + 7) &^ 7
+		if totalSize+NameLen < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += NameLen
+	}
+	if totalSize+7 < totalSize {
 		return nil, litz.ErrSizeOverflow
 	}
-	totalSize += NameLen
+	totalSize = (totalSize + 7) &^ 7
 
 	// Ensure output buffer is aligned and large enough
 	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
@@ -170,13 +191,29 @@ func marshalUserProfileWithDepth(u *UserProfile, buf []byte, depth int) ([]byte,
 	mirror.Age = u.Age
 	mirror.Score = u.Score
 	mirror.Active = u.Active
-	currentOffset := uintptr(8 + fixedSize)
+	currentOffset := uintptr((8 + fixedSize + 7) &^ 7)
+	if currentOffset > uintptr(8+fixedSize) {
+		clear(buf[8+fixedSize : currentOffset])
+	}
 
-	mirror.Name.offset = currentOffset
-	mirror.Name.length = NameLen
-	copy(buf[currentOffset:], u.Name)
-	currentOffset += uintptr(NameLen)
+	if NameLen > 0 {
+		padOffset := (currentOffset + 7) &^ 7
+		if padOffset > currentOffset {
+			clear(buf[currentOffset:padOffset])
+		}
+		currentOffset = padOffset
+		mirror.Name.offset = currentOffset
+		mirror.Name.length = NameLen
+		copy(buf[currentOffset:], u.Name)
+		currentOffset += uintptr(NameLen)
+	} else {
+		mirror.Name.offset = 0
+		mirror.Name.length = 0
+	}
 
+	if currentOffset < uintptr(totalSize) {
+		clear(buf[currentOffset:totalSize])
+	}
 	return buf, nil
 }
 
@@ -193,6 +230,9 @@ func unmarshalUserProfileWithDepth(buf []byte, u *UserProfile, depth int) error 
 	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
+	}
+	if uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {
+		return litz.ErrUnalignedBuffer
 	}
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
@@ -318,52 +358,86 @@ func marshalNestedPayloadWithDepth(u *NestedPayload, buf []byte, depth int) ([]b
 		}
 	}
 	ProfileLen := len(ProfileBytes)
-	if totalSize+ProfileLen < totalSize {
-		return nil, litz.ErrSizeOverflow
+	if ProfileLen > 0 {
+		if totalSize+7 < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize = (totalSize + 7) &^ 7
+		if totalSize+ProfileLen < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += ProfileLen
 	}
-	totalSize += ProfileLen
 	MetadataBytes, MetadataType, err := litz.MarshalAny(u.Metadata)
 	if err != nil {
 		return nil, err
 	}
 	MetadataLen := len(MetadataBytes)
-	if totalSize+MetadataLen < totalSize {
-		return nil, litz.ErrSizeOverflow
-	}
-	totalSize += MetadataLen
-	TagsLen := len(u.Tags)
-	// Slice array of string headers (size of Go string header)
-	TagsHeaderSize := TagsLen * int(unsafe.Sizeof(""))
-	if TagsLen > 0 && TagsHeaderSize/TagsLen != int(unsafe.Sizeof("")) {
-		return nil, litz.ErrSizeOverflow
-	}
-	if totalSize+TagsHeaderSize < totalSize {
-		return nil, litz.ErrSizeOverflow
-	}
-	totalSize += TagsHeaderSize
-	// Add string backing bytes
-	for i := 0; i < TagsLen; i++ {
-		strLen := len(u.Tags[i])
-		if totalSize+strLen < totalSize {
+	if MetadataLen > 0 {
+		if totalSize+7 < totalSize {
 			return nil, litz.ErrSizeOverflow
 		}
-		totalSize += strLen
+		totalSize = (totalSize + 7) &^ 7
+		if totalSize+MetadataLen < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += MetadataLen
+	}
+	TagsLen := len(u.Tags)
+	if TagsLen > 0 {
+		// Slice array of string headers (size of Go string header)
+		TagsHeaderSize := TagsLen * int(unsafe.Sizeof(""))
+		if TagsHeaderSize/TagsLen != int(unsafe.Sizeof("")) {
+			return nil, litz.ErrSizeOverflow
+		}
+		if totalSize+7 < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize = (totalSize + 7) &^ 7
+		if totalSize+TagsHeaderSize < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += TagsHeaderSize
+		// Add string backing bytes
+		for i := 0; i < TagsLen; i++ {
+			strLen := len(u.Tags[i])
+			if totalSize+strLen < totalSize {
+				return nil, litz.ErrSizeOverflow
+			}
+			totalSize += strLen
+		}
 	}
 	NumbersLen := len(u.Numbers)
 	var NumbersDummy int
-	NumbersSize := NumbersLen * int(unsafe.Sizeof(NumbersDummy))
-	if NumbersLen > 0 && NumbersSize/NumbersLen != int(unsafe.Sizeof(NumbersDummy)) {
-		return nil, litz.ErrSizeOverflow
+	if NumbersLen > 0 {
+		NumbersSize := NumbersLen * int(unsafe.Sizeof(NumbersDummy))
+		if NumbersSize/NumbersLen != int(unsafe.Sizeof(NumbersDummy)) {
+			return nil, litz.ErrSizeOverflow
+		}
+		if totalSize+7 < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize = (totalSize + 7) &^ 7
+		if totalSize+NumbersSize < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += NumbersSize
 	}
-	if totalSize+NumbersSize < totalSize {
-		return nil, litz.ErrSizeOverflow
-	}
-	totalSize += NumbersSize
 	SignatureLen := len(u.Signature)
-	if totalSize+SignatureLen < totalSize {
+	if SignatureLen > 0 {
+		if totalSize+7 < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize = (totalSize + 7) &^ 7
+		if totalSize+SignatureLen < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += SignatureLen
+	}
+	if totalSize+7 < totalSize {
 		return nil, litz.ErrSizeOverflow
 	}
-	totalSize += SignatureLen
+	totalSize = (totalSize + 7) &^ 7
 
 	// Ensure output buffer is aligned and large enough
 	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
@@ -383,9 +457,17 @@ func marshalNestedPayloadWithDepth(u *NestedPayload, buf []byte, depth int) ([]b
 	*(*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[8])) = nestedPayloadLitzMirror{}
 	mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
-	currentOffset := uintptr(8 + fixedSize)
+	currentOffset := uintptr((8 + fixedSize + 7) &^ 7)
+	if currentOffset > uintptr(8+fixedSize) {
+		clear(buf[8+fixedSize : currentOffset])
+	}
 
 	if ProfileLen > 0 {
+		padOffset := (currentOffset + 7) &^ 7
+		if padOffset > currentOffset {
+			clear(buf[currentOffset:padOffset])
+		}
+		currentOffset = padOffset
 		mirror.Profile = currentOffset
 		copy(buf[currentOffset:], ProfileBytes)
 		currentOffset += uintptr(ProfileLen)
@@ -393,16 +475,32 @@ func marshalNestedPayloadWithDepth(u *NestedPayload, buf []byte, depth int) ([]b
 		mirror.Profile = 0
 	}
 
-	mirror.Metadata.offset = currentOffset
-	mirror.Metadata.length = uint32(MetadataLen)
-	mirror.Metadata.valType = uint32(MetadataType)
-	copy(buf[currentOffset:], MetadataBytes)
-	currentOffset += uintptr(MetadataLen)
+	if MetadataLen > 0 {
+		padOffset := (currentOffset + 7) &^ 7
+		if padOffset > currentOffset {
+			clear(buf[currentOffset:padOffset])
+		}
+		currentOffset = padOffset
+		mirror.Metadata.offset = currentOffset
+		mirror.Metadata.length = uint32(MetadataLen)
+		mirror.Metadata.valType = uint32(MetadataType)
+		copy(buf[currentOffset:], MetadataBytes)
+		currentOffset += uintptr(MetadataLen)
+	} else {
+		mirror.Metadata.offset = 0
+		mirror.Metadata.length = 0
+		mirror.Metadata.valType = 0
+	}
 
-	mirror.Tags.offset = currentOffset
-	mirror.Tags.length = TagsLen
-	mirror.Tags.capacity = TagsLen
 	if TagsLen > 0 {
+		padOffset := (currentOffset + 7) &^ 7
+		if padOffset > currentOffset {
+			clear(buf[currentOffset:padOffset])
+		}
+		currentOffset = padOffset
+		mirror.Tags.offset = currentOffset
+		mirror.Tags.length = TagsLen
+		mirror.Tags.capacity = TagsLen
 		// First reserve space for slice of string headers (16B each)
 		strArrayOffset := currentOffset
 		currentOffset += uintptr(TagsLen * 16)
@@ -416,24 +514,51 @@ func marshalNestedPayloadWithDepth(u *NestedPayload, buf []byte, depth int) ([]b
 			*(*int)(unsafe.Pointer(&buf[entryPtr+8])) = strLen
 			currentOffset += uintptr(strLen)
 		}
+	} else {
+		mirror.Tags.offset = 0
+		mirror.Tags.length = 0
+		mirror.Tags.capacity = 0
 	}
 
-	mirror.Numbers.offset = currentOffset
-	mirror.Numbers.length = NumbersLen
-	mirror.Numbers.capacity = cap(u.Numbers)
 	if NumbersLen > 0 {
+		padOffset := (currentOffset + 7) &^ 7
+		if padOffset > currentOffset {
+			clear(buf[currentOffset:padOffset])
+		}
+		currentOffset = padOffset
+		mirror.Numbers.offset = currentOffset
+		mirror.Numbers.length = NumbersLen
+		mirror.Numbers.capacity = cap(u.Numbers)
 		varSize := NumbersLen * int(unsafe.Sizeof(NumbersDummy))
 		sliceBytes := unsafe.Slice((*byte)(unsafe.Pointer(&u.Numbers[0])), varSize)
 		copy(buf[currentOffset:], sliceBytes)
 		currentOffset += uintptr(varSize)
+	} else {
+		mirror.Numbers.offset = 0
+		mirror.Numbers.length = 0
+		mirror.Numbers.capacity = 0
 	}
 
-	mirror.Signature.offset = currentOffset
-	mirror.Signature.length = SignatureLen
-	mirror.Signature.capacity = cap(u.Signature)
-	copy(buf[currentOffset:], u.Signature)
-	currentOffset += uintptr(SignatureLen)
+	if SignatureLen > 0 {
+		padOffset := (currentOffset + 7) &^ 7
+		if padOffset > currentOffset {
+			clear(buf[currentOffset:padOffset])
+		}
+		currentOffset = padOffset
+		mirror.Signature.offset = currentOffset
+		mirror.Signature.length = SignatureLen
+		mirror.Signature.capacity = cap(u.Signature)
+		copy(buf[currentOffset:], u.Signature)
+		currentOffset += uintptr(SignatureLen)
+	} else {
+		mirror.Signature.offset = 0
+		mirror.Signature.length = 0
+		mirror.Signature.capacity = 0
+	}
 
+	if currentOffset < uintptr(totalSize) {
+		clear(buf[currentOffset:totalSize])
+	}
 	return buf, nil
 }
 
@@ -451,6 +576,9 @@ func unmarshalNestedPayloadWithDepth(buf []byte, u *NestedPayload, depth int) er
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
 	}
+	if uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {
+		return litz.ErrUnalignedBuffer
+	}
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
@@ -467,23 +595,47 @@ func unmarshalNestedPayloadWithDepth(buf []byte, u *NestedPayload, depth int) er
 	}
 
 	if 8+unsafe.Offsetof(mirror.Profile)+unsafe.Sizeof(mirror.Profile) <= uintptr(len(buf)) {
-		if mirror.Profile > uintptr(len(buf)) || (mirror.Profile > 0 && uintptr(len(buf))-mirror.Profile < unsafe.Sizeof(userProfileLitzMirror{})) {
+		if mirror.Profile > uintptr(len(buf)) {
+			return litz.ErrPointerOutOfBounds
+		}
+		if mirror.Profile > 0 && mirror.Profile%8 != 0 {
+			return litz.ErrUnalignedBuffer
+		}
+		if mirror.Profile > 0 && uintptr(len(buf))-mirror.Profile < unsafe.Sizeof(userProfileLitzMirror{}) {
 			return litz.ErrPointerOutOfBounds
 		}
 	}
 	if 8+unsafe.Offsetof(mirror.Metadata)+unsafe.Sizeof(mirror.Metadata) <= uintptr(len(buf)) {
-		if mirror.Metadata.offset > uintptr(len(buf)) || mirror.Metadata.length < 0 || int(mirror.Metadata.length) > len(buf)-int(mirror.Metadata.offset) {
+		if mirror.Metadata.offset > uintptr(len(buf)) || mirror.Metadata.length < 0 {
+			return litz.ErrStringOutOfBounds
+		}
+		if mirror.Metadata.length > 0 && mirror.Metadata.offset%8 != 0 {
+			return litz.ErrUnalignedBuffer
+		}
+		if int(mirror.Metadata.length) > len(buf)-int(mirror.Metadata.offset) {
 			return litz.ErrStringOutOfBounds
 		}
 	}
 	if 8+unsafe.Offsetof(mirror.Tags)+unsafe.Sizeof(mirror.Tags) <= uintptr(len(buf)) {
-		if mirror.Tags.offset > uintptr(len(buf)) || mirror.Tags.length < 0 || mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/int(unsafe.Sizeof("")) {
+		if mirror.Tags.offset > uintptr(len(buf)) || mirror.Tags.length < 0 {
+			return litz.ErrSliceOutOfBounds
+		}
+		if mirror.Tags.length > 0 && mirror.Tags.offset%8 != 0 {
+			return litz.ErrUnalignedBuffer
+		}
+		if mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/int(unsafe.Sizeof("")) {
 			return litz.ErrSliceOutOfBounds
 		}
 	}
 	if 8+unsafe.Offsetof(mirror.Numbers)+unsafe.Sizeof(mirror.Numbers) <= uintptr(len(buf)) {
 		var NumbersDummy int
-		if mirror.Numbers.offset > uintptr(len(buf)) || mirror.Numbers.length < 0 || mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
+		if mirror.Numbers.offset > uintptr(len(buf)) || mirror.Numbers.length < 0 {
+			return litz.ErrSliceOutOfBounds
+		}
+		if mirror.Numbers.length > 0 && mirror.Numbers.offset%uintptr(unsafe.Alignof(NumbersDummy)) != 0 {
+			return litz.ErrUnalignedBuffer
+		}
+		if mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
 			return litz.ErrSliceOutOfBounds
 		}
 	}
@@ -622,10 +774,20 @@ func marshalOuterMessageWithDepth(u *OuterMessage, buf []byte, depth int) ([]byt
 		}
 	}
 	BodyLen := len(BodyBytes)
-	if totalSize+BodyLen < totalSize {
+	if BodyLen > 0 {
+		if totalSize+7 < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize = (totalSize + 7) &^ 7
+		if totalSize+BodyLen < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += BodyLen
+	}
+	if totalSize+7 < totalSize {
 		return nil, litz.ErrSizeOverflow
 	}
-	totalSize += BodyLen
+	totalSize = (totalSize + 7) &^ 7
 
 	// Ensure output buffer is aligned and large enough
 	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
@@ -646,9 +808,17 @@ func marshalOuterMessageWithDepth(u *OuterMessage, buf []byte, depth int) ([]byt
 	mirror := (*outerMessageLitzMirror)(unsafe.Pointer(&buf[8]))
 
 	mirror.SeqNum = u.SeqNum
-	currentOffset := uintptr(8 + fixedSize)
+	currentOffset := uintptr((8 + fixedSize + 7) &^ 7)
+	if currentOffset > uintptr(8+fixedSize) {
+		clear(buf[8+fixedSize : currentOffset])
+	}
 
 	if BodyLen > 0 {
+		padOffset := (currentOffset + 7) &^ 7
+		if padOffset > currentOffset {
+			clear(buf[currentOffset:padOffset])
+		}
+		currentOffset = padOffset
 		mirror.Body = currentOffset
 		copy(buf[currentOffset:], BodyBytes)
 		currentOffset += uintptr(BodyLen)
@@ -656,6 +826,9 @@ func marshalOuterMessageWithDepth(u *OuterMessage, buf []byte, depth int) ([]byt
 		mirror.Body = 0
 	}
 
+	if currentOffset < uintptr(totalSize) {
+		clear(buf[currentOffset:totalSize])
+	}
 	return buf, nil
 }
 
@@ -672,6 +845,9 @@ func unmarshalOuterMessageWithDepth(buf []byte, u *OuterMessage, depth int) erro
 	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
+	}
+	if uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {
+		return litz.ErrUnalignedBuffer
 	}
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
@@ -691,7 +867,13 @@ func unmarshalOuterMessageWithDepth(buf []byte, u *OuterMessage, depth int) erro
 	if 8+unsafe.Offsetof(mirror.SeqNum)+unsafe.Sizeof(mirror.SeqNum) <= uintptr(len(buf)) {
 	}
 	if 8+unsafe.Offsetof(mirror.Body)+unsafe.Sizeof(mirror.Body) <= uintptr(len(buf)) {
-		if mirror.Body > uintptr(len(buf)) || (mirror.Body > 0 && uintptr(len(buf))-mirror.Body < unsafe.Sizeof(nestedPayloadLitzMirror{})) {
+		if mirror.Body > uintptr(len(buf)) {
+			return litz.ErrPointerOutOfBounds
+		}
+		if mirror.Body > 0 && mirror.Body%8 != 0 {
+			return litz.ErrUnalignedBuffer
+		}
+		if mirror.Body > 0 && uintptr(len(buf))-mirror.Body < unsafe.Sizeof(nestedPayloadLitzMirror{}) {
 			return litz.ErrPointerOutOfBounds
 		}
 	}
@@ -768,10 +950,20 @@ func marshalRecursiveNodeWithDepth(u *RecursiveNode, buf []byte, depth int) ([]b
 		}
 	}
 	NextLen := len(NextBytes)
-	if totalSize+NextLen < totalSize {
+	if NextLen > 0 {
+		if totalSize+7 < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize = (totalSize + 7) &^ 7
+		if totalSize+NextLen < totalSize {
+			return nil, litz.ErrSizeOverflow
+		}
+		totalSize += NextLen
+	}
+	if totalSize+7 < totalSize {
 		return nil, litz.ErrSizeOverflow
 	}
-	totalSize += NextLen
+	totalSize = (totalSize + 7) &^ 7
 
 	// Ensure output buffer is aligned and large enough
 	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
@@ -792,9 +984,17 @@ func marshalRecursiveNodeWithDepth(u *RecursiveNode, buf []byte, depth int) ([]b
 	mirror := (*recursiveNodeLitzMirror)(unsafe.Pointer(&buf[8]))
 
 	mirror.Val = u.Val
-	currentOffset := uintptr(8 + fixedSize)
+	currentOffset := uintptr((8 + fixedSize + 7) &^ 7)
+	if currentOffset > uintptr(8+fixedSize) {
+		clear(buf[8+fixedSize : currentOffset])
+	}
 
 	if NextLen > 0 {
+		padOffset := (currentOffset + 7) &^ 7
+		if padOffset > currentOffset {
+			clear(buf[currentOffset:padOffset])
+		}
+		currentOffset = padOffset
 		mirror.Next = currentOffset
 		copy(buf[currentOffset:], NextBytes)
 		currentOffset += uintptr(NextLen)
@@ -802,6 +1002,9 @@ func marshalRecursiveNodeWithDepth(u *RecursiveNode, buf []byte, depth int) ([]b
 		mirror.Next = 0
 	}
 
+	if currentOffset < uintptr(totalSize) {
+		clear(buf[currentOffset:totalSize])
+	}
 	return buf, nil
 }
 
@@ -818,6 +1021,9 @@ func unmarshalRecursiveNodeWithDepth(buf []byte, u *RecursiveNode, depth int) er
 	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
+	}
+	if uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {
+		return litz.ErrUnalignedBuffer
 	}
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
@@ -837,7 +1043,13 @@ func unmarshalRecursiveNodeWithDepth(buf []byte, u *RecursiveNode, depth int) er
 	if 8+unsafe.Offsetof(mirror.Val)+unsafe.Sizeof(mirror.Val) <= uintptr(len(buf)) {
 	}
 	if 8+unsafe.Offsetof(mirror.Next)+unsafe.Sizeof(mirror.Next) <= uintptr(len(buf)) {
-		if mirror.Next > uintptr(len(buf)) || (mirror.Next > 0 && uintptr(len(buf))-mirror.Next < unsafe.Sizeof(recursiveNodeLitzMirror{})) {
+		if mirror.Next > uintptr(len(buf)) {
+			return litz.ErrPointerOutOfBounds
+		}
+		if mirror.Next > 0 && mirror.Next%8 != 0 {
+			return litz.ErrUnalignedBuffer
+		}
+		if mirror.Next > 0 && uintptr(len(buf))-mirror.Next < unsafe.Sizeof(recursiveNodeLitzMirror{}) {
 			return litz.ErrPointerOutOfBounds
 		}
 	}

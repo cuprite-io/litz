@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.1.11"
+const Version = "v0.2.0"
 
 // HIBI Type Constants
 const (
@@ -33,6 +33,7 @@ const (
 // Sentinel Errors to avoid heap allocations on error paths
 var (
 	ErrBufferTooShort     = errors.New("litz.Unmarshal: buffer too short for fixed part")
+	ErrUnalignedBuffer    = errors.New("litz.Unmarshal: input buffer is not 8-byte aligned")
 	ErrStringOutOfBounds  = errors.New("litz.Unmarshal: string out of bounds")
 	ErrSliceOutOfBounds   = errors.New("litz.Unmarshal: slice out of bounds")
 	ErrPointerOutOfBounds = errors.New("litz.Unmarshal: nested pointer out of bounds")
@@ -56,6 +57,31 @@ func AlignedBuffer(size int) []byte {
 	}
 	u64Slice := make([]uint64, (size+7)/8)
 	return unsafe.Slice((*byte)(unsafe.Pointer(&u64Slice[0])), len(u64Slice)*8)[:size]
+}
+
+// CloneAligned copies an arbitrary (potentially unaligned) byte slice into a freshly
+// allocated 8-byte aligned buffer suitable for zero-copy Litz unmarshaling.
+// If buf is empty or nil, it returns nil.
+func CloneAligned(buf []byte) []byte {
+	if len(buf) == 0 {
+		return nil
+	}
+	aligned := AlignedBuffer(len(buf))
+	copy(aligned, buf)
+	return aligned
+}
+
+// EnsureAligned returns buf unchanged if its backing memory is already 8-byte aligned,
+// or returns an 8-byte aligned copy (via CloneAligned) if it is unaligned.
+// If buf is empty or nil, it returns nil.
+func EnsureAligned(buf []byte) []byte {
+	if len(buf) == 0 {
+		return nil
+	}
+	if uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 == 0 {
+		return buf
+	}
+	return CloneAligned(buf)
 }
 
 // Pool is a wrapper around sync.Pool for reusing serialization buffers.
@@ -96,11 +122,16 @@ func (p *Pool) Get(minSize int) *[]byte {
 // Put returns a buffer back to the pool.
 // To prevent memory bloat during massive payload spikes, buffers with capacity
 // larger than 16MB are discarded rather than returned to the pool.
+// Additionally, unaligned buffers are safely discarded to ensure recycled buffers
+// maintain strict 8-byte alignment invariants.
 // Note: We accept and return *[]byte (pointer to slice header) rather than []byte
 // to prevent the Go runtime from allocating interface boxing containers on sync.Pool.Put,
 // maintaining true zero-allocation execution on recycled paths.
 func (p *Pool) Put(bufPtr *[]byte) {
 	if bufPtr == nil || cap(*bufPtr) > 16*1024*1024 {
+		return
+	}
+	if cap(*bufPtr) > 0 && uintptr(unsafe.Pointer(unsafe.SliceData(*bufPtr)))%8 != 0 {
 		return
 	}
 	p.pool.Put(bufPtr)
@@ -767,7 +798,11 @@ func SliceSwizzle[T any](buf []byte, offset uintptr, length int) []T {
 	}
 	var empty T
 	elementSize := int(unsafe.Sizeof(empty))
+	align := unsafe.Alignof(empty)
 	if offset > uintptr(len(buf)) || length > (len(buf)-int(offset))/elementSize {
+		return nil
+	}
+	if (uintptr(unsafe.Pointer(&buf[0]))+offset)%align != 0 {
 		return nil
 	}
 	return unsafe.Slice((*T)(unsafe.Add(unsafe.Pointer(&buf[0]), offset)), length)

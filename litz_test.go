@@ -1040,3 +1040,272 @@ func FuzzUnmarshalSingleKey(f *testing.F) {
 		_ = UnmarshalSingleKey(data, &output)
 	})
 }
+
+func TestUnmarshalRejectsUnalignedBuffer(t *testing.T) {
+	t.Run("UserProfile", func(t *testing.T) {
+		input := &UserProfile{Age: 30, Score: 99.5, Name: "Alice", Active: true}
+		buf, err := MarshalUserProfile(input, nil)
+		if err != nil {
+			t.Fatalf("MarshalUserProfile failed: %v", err)
+		}
+		// Create an unaligned buffer by taking a subslice from offset 1
+		unaligned := make([]byte, len(buf)+1)
+		copy(unaligned[1:], buf)
+		var out UserProfile
+		err = UnmarshalUserProfile(unaligned[1:], &out)
+		if err != litz.ErrUnalignedBuffer {
+			t.Fatalf("expected ErrUnalignedBuffer, got: %v", err)
+		}
+	})
+
+	t.Run("NestedPayload", func(t *testing.T) {
+		input := &NestedPayload{
+			Profile:   &UserProfile{Age: 20, Name: "Bob"},
+			Tags:      []string{"go", "litz"},
+			Numbers:   []int{1, 2},
+			Signature: []byte("sign"),
+		}
+		buf, err := MarshalNestedPayload(input, nil)
+		if err != nil {
+			t.Fatalf("MarshalNestedPayload failed: %v", err)
+		}
+		unaligned := make([]byte, len(buf)+1)
+		copy(unaligned[1:], buf)
+		var out NestedPayload
+		err = UnmarshalNestedPayload(unaligned[1:], &out)
+		if err != litz.ErrUnalignedBuffer {
+			t.Fatalf("expected ErrUnalignedBuffer, got: %v", err)
+		}
+	})
+
+	t.Run("SingleKey", func(t *testing.T) {
+		input := &SingleKey{ID: 12345}
+		buf, err := MarshalSingleKey(input, nil)
+		if err != nil {
+			t.Fatalf("MarshalSingleKey failed: %v", err)
+		}
+		unaligned := make([]byte, len(buf)+1)
+		copy(unaligned[1:], buf)
+		var out SingleKey
+		err = UnmarshalSingleKey(unaligned[1:], &out)
+		if err != litz.ErrUnalignedBuffer {
+			t.Fatalf("expected ErrUnalignedBuffer, got: %v", err)
+		}
+	})
+}
+
+func TestVariableSegment8ByteAlignment(t *testing.T) {
+	input := &NestedPayload{
+		Profile: &UserProfile{
+			Age:    42,
+			Score:  3.14,
+			Name:   "OddLen", // len 6
+			Active: true,
+		},
+		Metadata:  map[string]any{"env": "test"},
+		Tags:      []string{"a", "bb", "ccc"}, // odd length strings
+		Numbers:   []int{10, 20, 30},
+		Signature: []byte("12345"), // len 5 (unaligned)
+	}
+
+	buf, err := MarshalNestedPayload(input, nil)
+	if err != nil {
+		t.Fatalf("MarshalNestedPayload failed: %v", err)
+	}
+
+	// 1. Total size must be a multiple of 8
+	if len(buf)%8 != 0 {
+		t.Fatalf("Total buffer size %d is not a multiple of 8", len(buf))
+	}
+
+	// 2. Base buffer must be 8-byte aligned
+	if uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {
+		t.Fatalf("Buffer address is not 8-byte aligned: %p", &buf[0])
+	}
+
+	// 3. Inspect mirror variable offsets directly
+	mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+
+	if mirror.Profile > 0 && mirror.Profile%8 != 0 {
+		t.Errorf("Profile offset %d is not 8-byte aligned", mirror.Profile)
+	}
+	if mirror.Metadata.length > 0 && mirror.Metadata.offset%8 != 0 {
+		t.Errorf("Metadata offset %d is not 8-byte aligned", mirror.Metadata.offset)
+	}
+	if mirror.Tags.length > 0 && mirror.Tags.offset%8 != 0 {
+		t.Errorf("Tags offset %d is not 8-byte aligned", mirror.Tags.offset)
+	}
+	if mirror.Numbers.length > 0 && mirror.Numbers.offset%8 != 0 {
+		t.Errorf("Numbers offset %d is not 8-byte aligned", mirror.Numbers.offset)
+	}
+	if mirror.Signature.length > 0 && mirror.Signature.offset%8 != 0 {
+		t.Errorf("Signature offset %d is not 8-byte aligned", mirror.Signature.offset)
+	}
+
+	// 4. Verify unmarshaling succeeds and matches original input
+	var decoded NestedPayload
+	if err := UnmarshalNestedPayload(buf, &decoded); err != nil {
+		t.Fatalf("UnmarshalNestedPayload failed: %v", err)
+	}
+	if decoded.Profile.Name != "OddLen" || decoded.Profile.Age != 42 {
+		t.Errorf("Profile mismatch: %+v", decoded.Profile)
+	}
+	if len(decoded.Tags) != 3 || decoded.Tags[0] != "a" || decoded.Tags[1] != "bb" || decoded.Tags[2] != "ccc" {
+		t.Errorf("Tags mismatch: %v", decoded.Tags)
+	}
+	if len(decoded.Numbers) != 3 || decoded.Numbers[0] != 10 {
+		t.Errorf("Numbers mismatch: %v", decoded.Numbers)
+	}
+	if string(decoded.Signature) != "12345" {
+		t.Errorf("Signature mismatch: %s", decoded.Signature)
+	}
+}
+
+func TestUnmarshalVariableSegmentRejectsUnalignedOffset(t *testing.T) {
+	input := &NestedPayload{
+		Profile: &UserProfile{Age: 25, Name: "Tester"},
+		Tags:    []string{"tag1", "tag2"},
+		Numbers: []int{100, 200},
+	}
+	buf, err := MarshalNestedPayload(input, nil)
+	if err != nil {
+		t.Fatalf("MarshalNestedPayload failed: %v", err)
+	}
+
+	t.Run("unaligned Profile pointer offset", func(t *testing.T) {
+		corrupted := bytes.Clone(buf)
+		mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&corrupted[8]))
+		mirror.Profile += 1 // make it unaligned
+		var out NestedPayload
+		err := UnmarshalNestedPayload(corrupted, &out)
+		if err != litz.ErrUnalignedBuffer {
+			t.Fatalf("expected ErrUnalignedBuffer, got: %v", err)
+		}
+	})
+
+	t.Run("unaligned Tags slice offset", func(t *testing.T) {
+		corrupted := bytes.Clone(buf)
+		mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&corrupted[8]))
+		mirror.Tags.offset += 1 // make it unaligned
+		var out NestedPayload
+		err := UnmarshalNestedPayload(corrupted, &out)
+		if err != litz.ErrUnalignedBuffer {
+			t.Fatalf("expected ErrUnalignedBuffer, got: %v", err)
+		}
+	})
+
+	t.Run("unaligned Numbers primitive slice offset", func(t *testing.T) {
+		corrupted := bytes.Clone(buf)
+		mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&corrupted[8]))
+		mirror.Numbers.offset += 1 // make it unaligned
+		var out NestedPayload
+		err := UnmarshalNestedPayload(corrupted, &out)
+		if err != litz.ErrUnalignedBuffer {
+			t.Fatalf("expected ErrUnalignedBuffer, got: %v", err)
+		}
+	})
+}
+
+func TestCloneAlignedAndEnsureAligned(t *testing.T) {
+	input := &UserProfile{Age: 45, Score: 88.8, Name: "AlignmentHelperTest", Active: true}
+	buf, err := MarshalUserProfile(input, nil)
+	if err != nil {
+		t.Fatalf("MarshalUserProfile failed: %v", err)
+	}
+
+	// Create an unaligned slice by slicing at odd offset
+	raw := make([]byte, len(buf)+3)
+	copy(raw[3:], buf)
+	unaligned := raw[3:]
+
+	if uintptr(unsafe.Pointer(&unaligned[0]))%8 == 0 {
+		unaligned = raw[1 : 1+len(buf)]
+	}
+
+	// 1. Verify unmarshaling directly fails
+	var out UserProfile
+	if err := UnmarshalUserProfile(unaligned, &out); err != litz.ErrUnalignedBuffer {
+		t.Fatalf("expected ErrUnalignedBuffer for unaligned slice, got: %v", err)
+	}
+
+	// 2. CloneAligned
+	cloned := litz.CloneAligned(unaligned)
+	if uintptr(unsafe.Pointer(&cloned[0]))%8 != 0 {
+		t.Fatalf("CloneAligned did not return 8-byte aligned buffer")
+	}
+	if err := UnmarshalUserProfile(cloned, &out); err != nil {
+		t.Fatalf("UnmarshalUserProfile on CloneAligned failed: %v", err)
+	}
+	if out.Name != "AlignmentHelperTest" || out.Age != 45 {
+		t.Fatalf("decoded content mismatch: %+v", out)
+	}
+
+	// 3. EnsureAligned on unaligned input
+	ensured := litz.EnsureAligned(unaligned)
+	if uintptr(unsafe.Pointer(&ensured[0]))%8 != 0 {
+		t.Fatalf("EnsureAligned did not return 8-byte aligned buffer for unaligned input")
+	}
+	if err := UnmarshalUserProfile(ensured, &out); err != nil {
+		t.Fatalf("UnmarshalUserProfile on EnsureAligned failed: %v", err)
+	}
+
+	// 4. EnsureAligned on already aligned input (must return identical slice without reallocation)
+	alignedOrig := litz.AlignedBuffer(len(buf))
+	copy(alignedOrig, buf)
+	ensuredSame := litz.EnsureAligned(alignedOrig)
+	if unsafe.SliceData(ensuredSame) != unsafe.SliceData(alignedOrig) {
+		t.Fatalf("EnsureAligned reallocated already aligned buffer")
+	}
+
+	// 5. Edge cases: nil and empty
+	if litz.CloneAligned(nil) != nil {
+		t.Fatalf("CloneAligned(nil) should return nil")
+	}
+	if litz.CloneAligned([]byte{}) != nil {
+		t.Fatalf("CloneAligned(empty) should return nil")
+	}
+	if litz.EnsureAligned(nil) != nil {
+		t.Fatalf("EnsureAligned(nil) should return nil")
+	}
+	if litz.EnsureAligned([]byte{}) != nil {
+		t.Fatalf("EnsureAligned(empty) should return nil")
+	}
+}
+
+func TestPoolDiscardsUnalignedBuffer(t *testing.T) {
+	p := litz.NewPool(256)
+	b := p.Get(128)
+	if uintptr(unsafe.Pointer(unsafe.SliceData(*b)))%8 != 0 {
+		t.Fatalf("Pool.Get did not return aligned buffer")
+	}
+
+	// Create an unaligned buffer
+	raw := make([]byte, 256)
+	unaligned := raw[1:]
+	p.Put(&unaligned)
+
+	// Future Get should still return an aligned buffer
+	b2 := p.Get(128)
+	if uintptr(unsafe.Pointer(unsafe.SliceData(*b2)))%8 != 0 {
+		t.Fatalf("Pool.Get returned unaligned buffer after unaligned Put")
+	}
+}
+
+func TestSliceSwizzleAlignmentSafety(t *testing.T) {
+	aligned := litz.AlignedBuffer(64)
+	for i := range aligned {
+		aligned[i] = byte(i)
+	}
+
+	// Aligned offset for uint64 (offset 8)
+	s := litz.SliceSwizzle[uint64](aligned, 8, 4)
+	if s == nil || len(s) != 4 {
+		t.Fatalf("expected valid uint64 slice for aligned offset")
+	}
+
+	// Unaligned offset for uint64 (offset 9)
+	sUnaligned := litz.SliceSwizzle[uint64](aligned, 9, 4)
+	if sUnaligned != nil {
+		t.Fatalf("expected nil for unaligned uint64 offset")
+	}
+}

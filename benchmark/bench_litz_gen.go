@@ -57,6 +57,9 @@ func UnmarshalSmallLitzPayload(buf []byte, u *SmallLitzPayload) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
+	if len(buf) == 8 {
+		return nil
+	}
 	mirror := (*smallLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
 	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
@@ -149,6 +152,9 @@ func UnmarshalMediumLitzPayload(buf []byte, u *MediumLitzPayload) error {
 	}
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
+	}
+	if len(buf) == 8 {
+		return nil
 	}
 	mirror := (*mediumLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
@@ -358,6 +364,9 @@ func UnmarshalLargeLitzPayload(buf []byte, u *LargeLitzPayload) error {
 	}
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
+	}
+	if len(buf) == 8 {
+		return nil
 	}
 	mirror := (*largeLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 

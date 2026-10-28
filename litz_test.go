@@ -587,6 +587,52 @@ func FuzzUnmarshalUserProfile(f *testing.F) {
 	})
 }
 
+func TestGeneratedUnmarshalAcceptsEmptyMirror(t *testing.T) {
+	header := func() []byte {
+		return []byte{'L', 'T', 'Z', '0', 1, 0, 0, 0}
+	}
+
+	t.Run("SingleKey", func(t *testing.T) {
+		var out SingleKey
+		if err := UnmarshalSingleKey(header(), &out); err != nil {
+			t.Fatalf("UnmarshalSingleKey failed: %v", err)
+		}
+		if out.ID != 0 {
+			t.Fatalf("ID = %d, want 0", out.ID)
+		}
+	})
+
+	t.Run("UserProfile", func(t *testing.T) {
+		var out UserProfile
+		if err := UnmarshalUserProfile(header(), &out); err != nil {
+			t.Fatalf("UnmarshalUserProfile failed: %v", err)
+		}
+		if out != (UserProfile{}) {
+			t.Fatalf("output = %+v, want zero value", out)
+		}
+	})
+
+	t.Run("NestedPayload", func(t *testing.T) {
+		var out NestedPayload
+		if err := UnmarshalNestedPayload(header(), &out); err != nil {
+			t.Fatalf("UnmarshalNestedPayload failed: %v", err)
+		}
+		if out.Profile != nil || out.Metadata != nil || out.Tags != nil || out.Numbers != nil || out.Signature != nil {
+			t.Fatalf("output = %+v, want zero value", out)
+		}
+	})
+
+	t.Run("OuterMessage", func(t *testing.T) {
+		var out OuterMessage
+		if err := UnmarshalOuterMessage(header(), &out); err != nil {
+			t.Fatalf("UnmarshalOuterMessage failed: %v", err)
+		}
+		if out.SeqNum != 0 || out.Body != nil {
+			t.Fatalf("output = %+v, want zero value", out)
+		}
+	})
+}
+
 func TestUnmarshalNestedPayloadRejectsMalformedStringHeaders(t *testing.T) {
 	input := &NestedPayload{
 		Tags:      []string{"alpha", "beta", "gamma"},
@@ -646,6 +692,24 @@ func TestUnmarshalNestedPayloadRejectsMalformedStringHeaders(t *testing.T) {
 			h.offset = uintptr(len(b))
 			h.length = 1
 		})
+	})
+}
+
+func FuzzUnmarshalNestedPayload(f *testing.F) {
+	input := &NestedPayload{
+		Tags:      []string{"alpha", "beta", "gamma"},
+		Numbers:   []int{1, 2, 3},
+		Signature: []byte("sig"),
+	}
+	buf, err := MarshalNestedPayload(input, nil)
+	if err == nil {
+		f.Add(buf)
+	}
+	f.Add([]byte{'L', 'T', 'Z', '0', 1, 0, 0, 0})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var output NestedPayload
+		_ = UnmarshalNestedPayload(data, &output)
 	})
 }
 

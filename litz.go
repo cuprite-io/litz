@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.1.7"
+const Version = "v0.1.8"
 
 // HIBI Type Constants
 const (

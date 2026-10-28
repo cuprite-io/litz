@@ -57,6 +57,9 @@ func UnmarshalSingleKey(buf []byte, u *SingleKey) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
+	if len(buf) == 8 {
+		return nil
+	}
 	mirror := (*singleKeyLitzMirror)(unsafe.Pointer(&buf[8]))
 
 	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
@@ -149,6 +152,9 @@ func UnmarshalUserProfile(buf []byte, u *UserProfile) error {
 	}
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
+	}
+	if len(buf) == 8 {
+		return nil
 	}
 	mirror := (*userProfileLitzMirror)(unsafe.Pointer(&buf[8]))
 
@@ -375,6 +381,9 @@ func UnmarshalNestedPayload(buf []byte, u *NestedPayload) error {
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
+	if len(buf) == 8 {
+		return nil
+	}
 	mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
 
 	if 8+unsafe.Offsetof(mirror.Profile)+unsafe.Sizeof(mirror.Profile) <= uintptr(len(buf)) {
@@ -564,6 +573,9 @@ func UnmarshalOuterMessage(buf []byte, u *OuterMessage) error {
 	}
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
+	}
+	if len(buf) == 8 {
+		return nil
 	}
 	mirror := (*outerMessageLitzMirror)(unsafe.Pointer(&buf[8]))
 

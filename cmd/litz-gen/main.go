@@ -430,6 +430,9 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		fmt.Fprintf(&buf, "\tif *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {\n")
 		fmt.Fprintf(&buf, "\t\treturn %sErrInvalidHeader\n", prefix)
 		buf.WriteString("\t}\n")
+		buf.WriteString("\tif len(buf) == 8 {\n")
+		buf.WriteString("\t\treturn nil\n")
+		buf.WriteString("\t}\n")
 		fmt.Fprintf(&buf, "\tmirror := (*%s)(unsafe.Pointer(&buf[8]))\n\n", mirrorName)
 
 		// Bounds checking utilizing sentinel errors (guarded by offset bounds checking for schema evolution)

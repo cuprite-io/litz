@@ -26,7 +26,7 @@ func MarshalSingleKey(u *SingleKey, buf []byte) ([]byte, error) {
 	totalSize := 8 + fixedSize
 
 	// Ensure output buffer is aligned and large enough
-	if cap(buf) < totalSize || (cap(buf) > 0 && uintptr(unsafe.Pointer(&buf[0]))%8 != 0) {
+	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
 		buf = litz.AlignedBuffer(totalSize)
 	}
 	buf = buf[:totalSize]
@@ -60,7 +60,14 @@ func UnmarshalSingleKey(buf []byte, u *SingleKey) error {
 	if len(buf) == 8 {
 		return nil
 	}
-	mirror := (*singleKeyLitzMirror)(unsafe.Pointer(&buf[8]))
+	var mirror *singleKeyLitzMirror
+	if len(buf) >= 8+int(unsafe.Sizeof(singleKeyLitzMirror{})) {
+		mirror = (*singleKeyLitzMirror)(unsafe.Pointer(&buf[8]))
+	} else {
+		var mirrorStorage singleKeyLitzMirror
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(&mirrorStorage)), unsafe.Sizeof(singleKeyLitzMirror{})), buf[8:])
+		mirror = &mirrorStorage
+	}
 
 	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
 	}
@@ -113,7 +120,7 @@ func MarshalUserProfile(u *UserProfile, buf []byte) ([]byte, error) {
 	totalSize += NameLen
 
 	// Ensure output buffer is aligned and large enough
-	if cap(buf) < totalSize || (cap(buf) > 0 && uintptr(unsafe.Pointer(&buf[0]))%8 != 0) {
+	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
 		buf = litz.AlignedBuffer(totalSize)
 	}
 	buf = buf[:totalSize]
@@ -156,7 +163,14 @@ func UnmarshalUserProfile(buf []byte, u *UserProfile) error {
 	if len(buf) == 8 {
 		return nil
 	}
-	mirror := (*userProfileLitzMirror)(unsafe.Pointer(&buf[8]))
+	var mirror *userProfileLitzMirror
+	if len(buf) >= 8+int(unsafe.Sizeof(userProfileLitzMirror{})) {
+		mirror = (*userProfileLitzMirror)(unsafe.Pointer(&buf[8]))
+	} else {
+		var mirrorStorage userProfileLitzMirror
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(&mirrorStorage)), unsafe.Sizeof(userProfileLitzMirror{})), buf[8:])
+		mirror = &mirrorStorage
+	}
 
 	if 8+unsafe.Offsetof(mirror.Age)+unsafe.Sizeof(mirror.Age) <= uintptr(len(buf)) {
 	}
@@ -300,7 +314,7 @@ func MarshalNestedPayload(u *NestedPayload, buf []byte) ([]byte, error) {
 	totalSize += SignatureLen
 
 	// Ensure output buffer is aligned and large enough
-	if cap(buf) < totalSize || (cap(buf) > 0 && uintptr(unsafe.Pointer(&buf[0]))%8 != 0) {
+	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
 		buf = litz.AlignedBuffer(totalSize)
 	}
 	buf = buf[:totalSize]
@@ -384,7 +398,14 @@ func UnmarshalNestedPayload(buf []byte, u *NestedPayload) error {
 	if len(buf) == 8 {
 		return nil
 	}
-	mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+	var mirror *nestedPayloadLitzMirror
+	if len(buf) >= 8+int(unsafe.Sizeof(nestedPayloadLitzMirror{})) {
+		mirror = (*nestedPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+	} else {
+		var mirrorStorage nestedPayloadLitzMirror
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(&mirrorStorage)), unsafe.Sizeof(nestedPayloadLitzMirror{})), buf[8:])
+		mirror = &mirrorStorage
+	}
 
 	if 8+unsafe.Offsetof(mirror.Profile)+unsafe.Sizeof(mirror.Profile) <= uintptr(len(buf)) {
 		if mirror.Profile > uintptr(len(buf)) || (mirror.Profile > 0 && uintptr(len(buf))-mirror.Profile < unsafe.Sizeof(userProfileLitzMirror{})) {
@@ -533,7 +554,7 @@ func MarshalOuterMessage(u *OuterMessage, buf []byte) ([]byte, error) {
 	totalSize += BodyLen
 
 	// Ensure output buffer is aligned and large enough
-	if cap(buf) < totalSize || (cap(buf) > 0 && uintptr(unsafe.Pointer(&buf[0]))%8 != 0) {
+	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
 		buf = litz.AlignedBuffer(totalSize)
 	}
 	buf = buf[:totalSize]
@@ -577,7 +598,14 @@ func UnmarshalOuterMessage(buf []byte, u *OuterMessage) error {
 	if len(buf) == 8 {
 		return nil
 	}
-	mirror := (*outerMessageLitzMirror)(unsafe.Pointer(&buf[8]))
+	var mirror *outerMessageLitzMirror
+	if len(buf) >= 8+int(unsafe.Sizeof(outerMessageLitzMirror{})) {
+		mirror = (*outerMessageLitzMirror)(unsafe.Pointer(&buf[8]))
+	} else {
+		var mirrorStorage outerMessageLitzMirror
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(&mirrorStorage)), unsafe.Sizeof(outerMessageLitzMirror{})), buf[8:])
+		mirror = &mirrorStorage
+	}
 
 	if 8+unsafe.Offsetof(mirror.SeqNum)+unsafe.Sizeof(mirror.SeqNum) <= uintptr(len(buf)) {
 	}

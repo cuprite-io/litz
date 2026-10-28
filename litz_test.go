@@ -695,6 +695,126 @@ func TestUnmarshalNestedPayloadRejectsMalformedStringHeaders(t *testing.T) {
 	})
 }
 
+func TestMarshalZeroLengthCapacityBuffer(t *testing.T) {
+	t.Run("SingleKey", func(t *testing.T) {
+		input := &SingleKey{ID: 42}
+		buf := make([]byte, 0, 1024)
+		out, err := MarshalSingleKey(input, buf)
+		if err != nil {
+			t.Fatalf("MarshalSingleKey failed: %v", err)
+		}
+		if &out[0] != &buf[:1024][0] {
+			t.Fatalf("expected Marshal to reuse backing array of aligned slice")
+		}
+		var decoded SingleKey
+		if err := UnmarshalSingleKey(out, &decoded); err != nil {
+			t.Fatalf("UnmarshalSingleKey failed: %v", err)
+		}
+		if decoded.ID != 42 {
+			t.Fatalf("decoded.ID = %d, want 42", decoded.ID)
+		}
+	})
+
+	t.Run("UserProfile", func(t *testing.T) {
+		input := &UserProfile{Age: 30, Score: 98.5, Name: "Alice", Active: true}
+		buf := make([]byte, 0, 1024)
+		out, err := MarshalUserProfile(input, buf)
+		if err != nil {
+			t.Fatalf("MarshalUserProfile failed: %v", err)
+		}
+		if &out[0] != &buf[:1024][0] {
+			t.Fatalf("expected Marshal to reuse backing array of aligned slice")
+		}
+		var decoded UserProfile
+		if err := UnmarshalUserProfile(out, &decoded); err != nil {
+			t.Fatalf("UnmarshalUserProfile failed: %v", err)
+		}
+		if decoded.Age != 30 || decoded.Score != 98.5 || decoded.Name != "Alice" || !decoded.Active {
+			t.Fatalf("decoded UserProfile mismatch: %+v", decoded)
+		}
+	})
+
+	t.Run("NestedPayload", func(t *testing.T) {
+		input := &NestedPayload{
+			Profile:   &UserProfile{Age: 25, Score: 88.0, Name: "Bob", Active: false},
+			Tags:      []string{"tag1", "tag2"},
+			Numbers:   []int{10, 20, 30},
+			Signature: []byte("secure-sig"),
+		}
+		buf := make([]byte, 0, 2048)
+		out, err := MarshalNestedPayload(input, buf)
+		if err != nil {
+			t.Fatalf("MarshalNestedPayload failed: %v", err)
+		}
+		if &out[0] != &buf[:2048][0] {
+			t.Fatalf("expected Marshal to reuse backing array of aligned slice")
+		}
+		var decoded NestedPayload
+		if err := UnmarshalNestedPayload(out, &decoded); err != nil {
+			t.Fatalf("UnmarshalNestedPayload failed: %v", err)
+		}
+		if decoded.Profile == nil || decoded.Profile.Age != 25 || decoded.Profile.Name != "Bob" {
+			t.Fatalf("decoded profile mismatch: %+v", decoded.Profile)
+		}
+		if len(decoded.Tags) != 2 || decoded.Tags[0] != "tag1" || decoded.Tags[1] != "tag2" {
+			t.Fatalf("decoded tags mismatch: %v", decoded.Tags)
+		}
+		if len(decoded.Numbers) != 3 || decoded.Numbers[0] != 10 {
+			t.Fatalf("decoded numbers mismatch: %v", decoded.Numbers)
+		}
+		if string(decoded.Signature) != "secure-sig" {
+			t.Fatalf("decoded signature mismatch: %s", decoded.Signature)
+		}
+	})
+
+	t.Run("OuterMessage", func(t *testing.T) {
+		input := &OuterMessage{
+			SeqNum: 777,
+			Body: &NestedPayload{
+				Tags: []string{"msg"},
+			},
+		}
+		buf := make([]byte, 0, 2048)
+		out, err := MarshalOuterMessage(input, buf)
+		if err != nil {
+			t.Fatalf("MarshalOuterMessage failed: %v", err)
+		}
+		if &out[0] != &buf[:2048][0] {
+			t.Fatalf("expected Marshal to reuse backing array of aligned slice")
+		}
+		var decoded OuterMessage
+		if err := UnmarshalOuterMessage(out, &decoded); err != nil {
+			t.Fatalf("UnmarshalOuterMessage failed: %v", err)
+		}
+		if decoded.SeqNum != 777 || decoded.Body == nil || len(decoded.Body.Tags) != 1 || decoded.Body.Tags[0] != "msg" {
+			t.Fatalf("decoded OuterMessage mismatch: %+v", decoded)
+		}
+	})
+}
+
+func TestMarshalUnalignedBufferFallback(t *testing.T) {
+	input := &UserProfile{Age: 99, Score: 77.7, Name: "UnalignedTest", Active: true}
+	// Create an unaligned slice with sufficient capacity by offsetting an aligned buffer by 1 byte
+	aligned := litz.AlignedBuffer(1024)
+	unaligned := aligned[1:1:1024] // len=0, cap=1023, address % 8 != 0
+
+	out, err := MarshalUserProfile(input, unaligned)
+	if err != nil {
+		t.Fatalf("MarshalUserProfile with unaligned buffer failed: %v", err)
+	}
+	// Must have allocated a fresh aligned buffer instead of using unaligned slice
+	if uintptr(unsafe.Pointer(&out[0]))%8 != 0 {
+		t.Fatalf("MarshalUserProfile returned unaligned output buffer")
+	}
+	var decoded UserProfile
+	if err := UnmarshalUserProfile(out, &decoded); err != nil {
+		t.Fatalf("UnmarshalUserProfile failed: %v", err)
+	}
+	if decoded.Age != 99 || decoded.Score != 77.7 || decoded.Name != "UnalignedTest" || !decoded.Active {
+		t.Fatalf("decoded mismatch: %+v", decoded)
+	}
+}
+
 func FuzzUnmarshalNestedPayload(f *testing.F) {
 	input := &NestedPayload{
 		Tags:      []string{"alpha", "beta", "gamma"},

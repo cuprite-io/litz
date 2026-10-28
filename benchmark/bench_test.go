@@ -416,3 +416,53 @@ func BenchmarkUnmarshalJSONStd_Large(b *testing.B) {
 		}
 	}
 }
+
+func TestMarshalBenchmarkPayloadsZeroLengthBuffer(t *testing.T) {
+	t.Run("Small", func(t *testing.T) {
+		buf := make([]byte, 0, 128)
+		out, err := MarshalSmallLitzPayload(&smallLitzInput, buf)
+		if err != nil {
+			t.Fatalf("MarshalSmallLitzPayload failed: %v", err)
+		}
+		var decoded SmallLitzPayload
+		if err := UnmarshalSmallLitzPayload(out, &decoded); err != nil {
+			t.Fatalf("UnmarshalSmallLitzPayload failed: %v", err)
+		}
+		if decoded.ID != smallLitzInput.ID {
+			t.Fatalf("decoded.ID = %d, want %d", decoded.ID, smallLitzInput.ID)
+		}
+	})
+
+	t.Run("Medium", func(t *testing.T) {
+		buf := make([]byte, 0, 256)
+		out, err := MarshalMediumLitzPayload(&mediumLitzInput, buf)
+		if err != nil {
+			t.Fatalf("MarshalMediumLitzPayload failed: %v", err)
+		}
+		var decoded MediumLitzPayload
+		if err := UnmarshalMediumLitzPayload(out, &decoded); err != nil {
+			t.Fatalf("UnmarshalMediumLitzPayload failed: %v", err)
+		}
+		if decoded.ID != mediumLitzInput.ID || decoded.Email != mediumLitzInput.Email || decoded.Active != mediumLitzInput.Active || decoded.Clicks != mediumLitzInput.Clicks {
+			t.Fatalf("decoded MediumLitzPayload mismatch: %+v", decoded)
+		}
+	})
+
+	t.Run("Large", func(t *testing.T) {
+		buf := make([]byte, 0, 2048)
+		out, err := MarshalLargeLitzPayload(&largeLitzInput, buf)
+		if err != nil {
+			t.Fatalf("MarshalLargeLitzPayload failed: %v", err)
+		}
+		var decoded LargeLitzPayload
+		if err := UnmarshalLargeLitzPayload(out, &decoded); err != nil {
+			t.Fatalf("UnmarshalLargeLitzPayload failed: %v", err)
+		}
+		if decoded.ID != largeLitzInput.ID || decoded.Name != largeLitzInput.Name || len(decoded.Numbers) != len(largeLitzInput.Numbers) || len(decoded.Tags) != len(largeLitzInput.Tags) {
+			t.Fatalf("decoded LargeLitzPayload mismatch: %+v", decoded)
+		}
+		if decoded.Child == nil || decoded.Child.ID != largeLitzInput.Child.ID || decoded.Child.Email != largeLitzInput.Child.Email {
+			t.Fatalf("decoded LargeLitzPayload child mismatch: %+v", decoded.Child)
+		}
+	})
+}

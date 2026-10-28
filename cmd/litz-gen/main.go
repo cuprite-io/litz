@@ -321,7 +321,7 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		}
 
 		buf.WriteString("\n\t// Ensure output buffer is aligned and large enough\n")
-		buf.WriteString("\tif cap(buf) < totalSize || (cap(buf) > 0 && uintptr(unsafe.Pointer(&buf[0]))%8 != 0) {\n")
+		buf.WriteString("\tif cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {\n")
 		fmt.Fprintf(&buf, "\t\tbuf = %sAlignedBuffer(totalSize)\n", prefix)
 		buf.WriteString("\t}\n")
 		buf.WriteString("\tbuf = buf[:totalSize]\n\n")
@@ -433,7 +433,14 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		buf.WriteString("\tif len(buf) == 8 {\n")
 		buf.WriteString("\t\treturn nil\n")
 		buf.WriteString("\t}\n")
-		fmt.Fprintf(&buf, "\tmirror := (*%s)(unsafe.Pointer(&buf[8]))\n\n", mirrorName)
+		fmt.Fprintf(&buf, "\tvar mirror *%s\n", mirrorName)
+		fmt.Fprintf(&buf, "\tif len(buf) >= 8+int(unsafe.Sizeof(%s{})) {\n", mirrorName)
+		fmt.Fprintf(&buf, "\t\tmirror = (*%s)(unsafe.Pointer(&buf[8]))\n", mirrorName)
+		buf.WriteString("\t} else {\n")
+		fmt.Fprintf(&buf, "\t\tvar mirrorStorage %s\n", mirrorName)
+		fmt.Fprintf(&buf, "\t\tcopy(unsafe.Slice((*byte)(unsafe.Pointer(&mirrorStorage)), unsafe.Sizeof(%s{})), buf[8:])\n", mirrorName)
+		buf.WriteString("\t\tmirror = &mirrorStorage\n")
+		buf.WriteString("\t}\n\n")
 
 		// Bounds checking utilizing sentinel errors (guarded by offset bounds checking for schema evolution)
 		for _, f := range s.Fields {

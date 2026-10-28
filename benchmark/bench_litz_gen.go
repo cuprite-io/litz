@@ -26,7 +26,7 @@ func MarshalSmallLitzPayload(u *SmallLitzPayload, buf []byte) ([]byte, error) {
 	totalSize := 8 + fixedSize
 
 	// Ensure output buffer is aligned and large enough
-	if cap(buf) < totalSize || (cap(buf) > 0 && uintptr(unsafe.Pointer(&buf[0]))%8 != 0) {
+	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
 		buf = litz.AlignedBuffer(totalSize)
 	}
 	buf = buf[:totalSize]
@@ -60,7 +60,14 @@ func UnmarshalSmallLitzPayload(buf []byte, u *SmallLitzPayload) error {
 	if len(buf) == 8 {
 		return nil
 	}
-	mirror := (*smallLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+	var mirror *smallLitzPayloadLitzMirror
+	if len(buf) >= 8+int(unsafe.Sizeof(smallLitzPayloadLitzMirror{})) {
+		mirror = (*smallLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+	} else {
+		var mirrorStorage smallLitzPayloadLitzMirror
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(&mirrorStorage)), unsafe.Sizeof(smallLitzPayloadLitzMirror{})), buf[8:])
+		mirror = &mirrorStorage
+	}
 
 	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
 	}
@@ -113,7 +120,7 @@ func MarshalMediumLitzPayload(u *MediumLitzPayload, buf []byte) ([]byte, error) 
 	totalSize += EmailLen
 
 	// Ensure output buffer is aligned and large enough
-	if cap(buf) < totalSize || (cap(buf) > 0 && uintptr(unsafe.Pointer(&buf[0]))%8 != 0) {
+	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
 		buf = litz.AlignedBuffer(totalSize)
 	}
 	buf = buf[:totalSize]
@@ -156,7 +163,14 @@ func UnmarshalMediumLitzPayload(buf []byte, u *MediumLitzPayload) error {
 	if len(buf) == 8 {
 		return nil
 	}
-	mirror := (*mediumLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+	var mirror *mediumLitzPayloadLitzMirror
+	if len(buf) >= 8+int(unsafe.Sizeof(mediumLitzPayloadLitzMirror{})) {
+		mirror = (*mediumLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+	} else {
+		var mirrorStorage mediumLitzPayloadLitzMirror
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(&mirrorStorage)), unsafe.Sizeof(mediumLitzPayloadLitzMirror{})), buf[8:])
+		mirror = &mirrorStorage
+	}
 
 	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
 	}
@@ -289,7 +303,7 @@ func MarshalLargeLitzPayload(u *LargeLitzPayload, buf []byte) ([]byte, error) {
 	totalSize += ChildLen
 
 	// Ensure output buffer is aligned and large enough
-	if cap(buf) < totalSize || (cap(buf) > 0 && uintptr(unsafe.Pointer(&buf[0]))%8 != 0) {
+	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
 		buf = litz.AlignedBuffer(totalSize)
 	}
 	buf = buf[:totalSize]
@@ -368,7 +382,14 @@ func UnmarshalLargeLitzPayload(buf []byte, u *LargeLitzPayload) error {
 	if len(buf) == 8 {
 		return nil
 	}
-	mirror := (*largeLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+	var mirror *largeLitzPayloadLitzMirror
+	if len(buf) >= 8+int(unsafe.Sizeof(largeLitzPayloadLitzMirror{})) {
+		mirror = (*largeLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+	} else {
+		var mirrorStorage largeLitzPayloadLitzMirror
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(&mirrorStorage)), unsafe.Sizeof(largeLitzPayloadLitzMirror{})), buf[8:])
+		mirror = &mirrorStorage
+	}
 
 	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
 	}

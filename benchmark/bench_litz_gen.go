@@ -413,15 +413,13 @@ func UnmarshalLargeLitzPayload(buf []byte, u *LargeLitzPayload) error {
 				offset uintptr
 				length int
 			})(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Tags.offset)), mirror.Tags.length)
-			maxExtent := 0
+			// Validate every string header before creating any unsafe.String view.
 			for i := 0; i < len(strHeaders); i++ {
-				endOffset := int(strHeaders[i].offset) + strHeaders[i].length
-				if endOffset > maxExtent {
-					maxExtent = endOffset
+				off := uint64(strHeaders[i].offset)
+				length := strHeaders[i].length
+				if length < 0 || off > uint64(len(buf)) || uint64(length) > uint64(len(buf))-off {
+					return litz.ErrStringOutOfBounds
 				}
-			}
-			if maxExtent > len(buf) {
-				return litz.ErrStringOutOfBounds
 			}
 			slice := make([]string, len(strHeaders))
 			for i := 0; i < len(strHeaders); i++ {

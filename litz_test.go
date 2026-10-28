@@ -587,6 +587,68 @@ func FuzzUnmarshalUserProfile(f *testing.F) {
 	})
 }
 
+func TestUnmarshalNestedPayloadRejectsMalformedStringHeaders(t *testing.T) {
+	input := &NestedPayload{
+		Tags:      []string{"alpha", "beta", "gamma"},
+		Numbers:   []int{1, 2, 3},
+		Signature: []byte("sig"),
+	}
+	buf, err := MarshalNestedPayload(input, nil)
+	if err != nil {
+		t.Fatalf("MarshalNestedPayload failed: %v", err)
+	}
+
+	stringHeaders := func(b []byte) []struct {
+		offset uintptr
+		length int
+	} {
+		mirror := (*nestedPayloadLitzMirror)(unsafe.Pointer(&b[8]))
+		return unsafe.Slice((*struct {
+			offset uintptr
+			length int
+		})(unsafe.Add(unsafe.Pointer(&b[0]), mirror.Tags.offset)), mirror.Tags.length)
+	}
+
+	checkRejected := func(t *testing.T, mutate func([]byte)) {
+		t.Helper()
+		clone := append([]byte(nil), buf...)
+		mutate(clone)
+
+		var output NestedPayload
+		if err := UnmarshalNestedPayload(clone, &output); err != litz.ErrStringOutOfBounds {
+			t.Fatalf("UnmarshalNestedPayload error = %v, want %v", err, litz.ErrStringOutOfBounds)
+		}
+	}
+
+	t.Run("offset overflows int", func(t *testing.T) {
+		checkRejected(t, func(b []byte) {
+			stringHeaders(b)[0].offset = ^uintptr(0)
+		})
+	})
+
+	t.Run("negative length", func(t *testing.T) {
+		checkRejected(t, func(b []byte) {
+			stringHeaders(b)[0].length = -1
+		})
+	})
+
+	t.Run("length exceeds remaining buffer", func(t *testing.T) {
+		checkRejected(t, func(b []byte) {
+			h := &stringHeaders(b)[0]
+			h.offset = uintptr(len(b)) - 1
+			h.length = 2
+		})
+	})
+
+	t.Run("nonzero length at end of buffer", func(t *testing.T) {
+		checkRejected(t, func(b []byte) {
+			h := &stringHeaders(b)[0]
+			h.offset = uintptr(len(b))
+			h.length = 1
+		})
+	})
+}
+
 func FuzzUnmarshalSingleKey(f *testing.F) {
 	single := &SingleKey{ID: 100}
 	buf, err := MarshalSingleKey(single, nil)

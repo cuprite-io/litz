@@ -59,21 +59,6 @@ func main() {
 		return
 	}
 
-	// Validate that nested struct fields also have //litz:generate
-	structMap := make(map[string]bool)
-	for _, s := range structs {
-		structMap[s.Name] = true
-	}
-	for _, s := range structs {
-		for _, f := range s.Fields {
-			if f.Kind == TypeStructPtr {
-				if !structMap[f.BaseType] {
-					log.Printf("WARNING: struct %s references %s, but %s is not marked with //litz:generate. This will cause compilation errors in generated code.", s.Name, f.BaseType, f.BaseType)
-				}
-			}
-		}
-	}
-
 	code, err := generateCode(packageName, structs)
 	if err != nil {
 		log.Fatalf("Code generation error: %v", err)
@@ -88,13 +73,90 @@ func main() {
 	fmt.Printf("Successfully generated Litz serialization code for %d structs in %s\n", len(structs), outPath)
 }
 
+var primitiveTypes = map[string]int{
+	"int":     8,
+	"int64":   8,
+	"uint64":  8,
+	"uintptr": 8,
+	"float64": 8,
+	"int32":   4,
+	"uint32":  4,
+	"float32": 4,
+	"int16":   2,
+	"uint16":  2,
+	"int8":    1,
+	"uint8":   1,
+	"byte":    1,
+	"bool":    1,
+}
+
+type TypeEnv struct {
+	primitives map[string]int
+	structs    map[string]bool
+}
+
+func buildTypeEnv(pkgs map[string]*ast.Package) TypeEnv {
+	env := TypeEnv{
+		primitives: make(map[string]int),
+		structs:    make(map[string]bool),
+	}
+	for k, v := range primitiveTypes {
+		env.primitives[k] = v
+	}
+
+	rawAliases := make(map[string]string)
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				genDecl, ok := decl.(*ast.GenDecl)
+				if !ok || genDecl.Tok != token.TYPE {
+					continue
+				}
+				for _, spec := range genDecl.Specs {
+					typeSpec, ok := spec.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					name := typeSpec.Name.Name
+					switch t := typeSpec.Type.(type) {
+					case *ast.StructType:
+						env.structs[name] = true
+					case *ast.Ident:
+						rawAliases[name] = t.Name
+					}
+				}
+			}
+		}
+	}
+
+	// Resolve alias chains (e.g. type MyID uint64, type AdminID MyID)
+	changed := true
+	for changed {
+		changed = false
+		for alias, target := range rawAliases {
+			if _, exists := env.primitives[alias]; !exists {
+				if size, ok := env.primitives[target]; ok {
+					env.primitives[alias] = size
+					changed = true
+				}
+			}
+		}
+	}
+
+	return env
+}
+
 func parseDir(dir string) (string, []StructInfo, error) {
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, dir, nil, parser.ParseComments)
 	if err != nil {
 		return "", nil, err
 	}
+	return parsePackages(pkgs)
+}
 
+func parsePackages(pkgs map[string]*ast.Package) (string, []StructInfo, error) {
+	env := buildTypeEnv(pkgs)
 	var packageName string
 	var structs []StructInfo
 
@@ -140,14 +202,13 @@ func parseDir(dir string) (string, []StructInfo, error) {
 
 					for _, field := range structType.Fields.List {
 						if len(field.Names) == 0 {
-							log.Printf("WARNING: struct %s contains embedded struct which is currently unsupported and skipped", info.Name)
-							continue // Skip embedded fields for simplicity
+							return "", nil, fmt.Errorf("struct %s contains an embedded field which is unsupported", info.Name)
 						}
 
 						for _, name := range field.Names {
-							fieldInfo, err := parseField(name.Name, field.Type)
+							fieldInfo, err := parseField(info.Name, name.Name, field.Type, env)
 							if err != nil {
-								return "", nil, fmt.Errorf("field %s: %w", name.Name, err)
+								return "", nil, err
 							}
 							info.Fields = append(info.Fields, fieldInfo)
 						}
@@ -159,40 +220,44 @@ func parseDir(dir string) (string, []StructInfo, error) {
 		}
 	}
 
+	if err := validateStructs(structs); err != nil {
+		return "", nil, err
+	}
+
 	return packageName, structs, nil
 }
 
-func parseField(name string, expr ast.Expr) (FieldInfo, error) {
+func parseField(structName, name string, expr ast.Expr, env TypeEnv) (FieldInfo, error) {
 	switch t := expr.(type) {
 	case *ast.Ident:
 		typeStr := t.Name
-		switch typeStr {
-		case "int", "int64", "uint64", "float64":
-			return FieldInfo{Name: name, TypeStr: typeStr, Kind: TypePrimitive, Size: 8}, nil
-		case "int32", "uint32", "float32":
-			return FieldInfo{Name: name, TypeStr: typeStr, Kind: TypePrimitive, Size: 4}, nil
-		case "int16", "uint16":
-			return FieldInfo{Name: name, TypeStr: typeStr, Kind: TypePrimitive, Size: 2}, nil
-		case "int8", "uint8", "byte", "bool":
-			return FieldInfo{Name: name, TypeStr: typeStr, Kind: TypePrimitive, Size: 1}, nil
-		case "string":
-			return FieldInfo{Name: name, TypeStr: "string", Kind: TypeString}, nil
-		case "any":
-			return FieldInfo{Name: name, TypeStr: "any", Kind: TypeAny}, nil
-		default:
-			// Treat other identifiers as primitives for custom types (e.g. enum/int aliases)
-			return FieldInfo{Name: name, TypeStr: typeStr, Kind: TypePrimitive, Size: 8}, nil
+		if size, ok := env.primitives[typeStr]; ok {
+			return FieldInfo{Name: name, TypeStr: typeStr, Kind: TypePrimitive, Size: size}, nil
 		}
+		if typeStr == "string" {
+			return FieldInfo{Name: name, TypeStr: "string", Kind: TypeString}, nil
+		}
+		if typeStr == "any" {
+			return FieldInfo{Name: name, TypeStr: "any", Kind: TypeAny}, nil
+		}
+		if env.structs[typeStr] {
+			return FieldInfo{}, fmt.Errorf("struct %s: field %q has non-pointer struct type %q (use pointer *%s with //litz:generate)", structName, name, typeStr, typeStr)
+		}
+		return FieldInfo{}, fmt.Errorf("struct %s: field %q has unsupported type %q (unknown or pointer-bearing type not permitted)", structName, name, typeStr)
 
 	case *ast.InterfaceType:
-		// interface{} is treated as TypeAny
-		return FieldInfo{Name: name, TypeStr: "any", Kind: TypeAny}, nil
+		if t.Methods == nil || len(t.Methods.List) == 0 {
+			return FieldInfo{Name: name, TypeStr: "any", Kind: TypeAny}, nil
+		}
+		return FieldInfo{}, fmt.Errorf("struct %s: field %q has non-empty interface type (only 'any' or 'interface{}' is supported)", structName, name)
 
 	case *ast.ArrayType:
-		// Slices
+		if t.Len != nil {
+			return FieldInfo{}, fmt.Errorf("struct %s: field %q has fixed-size array type (arrays are unsupported; use slice)", structName, name)
+		}
 		eltIdent, ok := t.Elt.(*ast.Ident)
 		if !ok {
-			return FieldInfo{}, fmt.Errorf("unsupported slice element type")
+			return FieldInfo{}, fmt.Errorf("struct %s: field %q has unsupported slice element type %T (only slices of primitives or strings are supported)", structName, name, t.Elt)
 		}
 		baseType := eltIdent.Name
 		if baseType == "byte" {
@@ -201,19 +266,51 @@ func parseField(name string, expr ast.Expr) (FieldInfo, error) {
 		if baseType == "string" {
 			return FieldInfo{Name: name, TypeStr: "[]string", BaseType: "string", Kind: TypeSliceString}, nil
 		}
-		return FieldInfo{Name: name, TypeStr: "[]" + baseType, BaseType: baseType, Kind: TypeSlicePrimitive}, nil
+		if size, ok := env.primitives[baseType]; ok {
+			return FieldInfo{Name: name, TypeStr: "[]" + baseType, BaseType: baseType, Kind: TypeSlicePrimitive, Size: size}, nil
+		}
+		if baseType == "any" {
+			return FieldInfo{}, fmt.Errorf("struct %s: field %q has unsupported slice type '[]any' (heterogeneous slices are unsupported)", structName, name)
+		}
+		if env.structs[baseType] {
+			return FieldInfo{}, fmt.Errorf("struct %s: field %q has unsupported slice of structs '[]%s'", structName, name, baseType)
+		}
+		return FieldInfo{}, fmt.Errorf("struct %s: field %q has unsupported slice element type %q", structName, name, baseType)
 
 	case *ast.StarExpr:
-		// Pointer to struct
 		structIdent, ok := t.X.(*ast.Ident)
 		if !ok {
-			return FieldInfo{}, fmt.Errorf("unsupported pointer type")
+			return FieldInfo{}, fmt.Errorf("struct %s: field %q has unsupported pointer expression %T", structName, name, t.X)
 		}
-		return FieldInfo{Name: name, TypeStr: "*" + structIdent.Name, BaseType: structIdent.Name, Kind: TypeStructPtr}, nil
+		target := structIdent.Name
+		if _, isPrim := env.primitives[target]; isPrim || target == "string" || target == "any" || target == "byte" {
+			return FieldInfo{}, fmt.Errorf("struct %s: field %q has pointer to primitive type '*%s' (only pointers to //litz:generate structs are supported)", structName, name, target)
+		}
+		if !env.structs[target] {
+			return FieldInfo{}, fmt.Errorf("struct %s: field %q references '%s', which is not a known struct in the package", structName, name, target)
+		}
+		return FieldInfo{Name: name, TypeStr: "*" + target, BaseType: target, Kind: TypeStructPtr}, nil
 
 	default:
-		return FieldInfo{}, fmt.Errorf("unsupported AST expression type")
+		return FieldInfo{}, fmt.Errorf("struct %s: field %q has unsupported type %T (maps, channels, functions, and selector types are unsupported)", structName, name, expr)
 	}
+}
+
+func validateStructs(structs []StructInfo) error {
+	structMap := make(map[string]bool)
+	for _, s := range structs {
+		structMap[s.Name] = true
+	}
+	for _, s := range structs {
+		for _, f := range s.Fields {
+			if f.Kind == TypeStructPtr {
+				if !structMap[f.BaseType] {
+					return fmt.Errorf("struct %s references %s, but %s is not marked with //litz:generate", s.Name, f.BaseType, f.BaseType)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {

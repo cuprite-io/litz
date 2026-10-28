@@ -266,7 +266,15 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		buf.WriteString("\n")
 
 		// 2. Generate Marshal Method
+		fmt.Fprintf(&buf, "// Marshal%s serializes %s into buf using SBC-IPR.\n", s.Name, s.Name)
 		fmt.Fprintf(&buf, "func Marshal%s(u *%s, buf []byte) ([]byte, error) {\n", s.Name, s.Name)
+		fmt.Fprintf(&buf, "\treturn marshal%sWithDepth(u, buf, 0)\n", s.Name)
+		buf.WriteString("}\n\n")
+
+		fmt.Fprintf(&buf, "func marshal%sWithDepth(u *%s, buf []byte, depth int) ([]byte, error) {\n", s.Name, s.Name)
+		fmt.Fprintf(&buf, "\tif depth > %sDefaultMaxDepth {\n", prefix)
+		fmt.Fprintf(&buf, "\t\treturn nil, %sErrMaxDepthExceeded\n", prefix)
+		buf.WriteString("\t}\n")
 		fmt.Fprintf(&buf, "\tfixedSize := int(unsafe.Sizeof(%s{}))\n", mirrorName)
 		buf.WriteString("\ttotalSize := 8 + fixedSize\n\n")
 
@@ -311,7 +319,7 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 				fmt.Fprintf(&buf, "\tvar %sBytes []byte\n", f.Name)
 				fmt.Fprintf(&buf, "\tif u.%s != nil {\n", f.Name)
 				buf.WriteString("\t\tvar err error\n")
-				fmt.Fprintf(&buf, "\t\t%sBytes, err = Marshal%s(u.%s, nil)\n", f.Name, f.BaseType, f.Name)
+				fmt.Fprintf(&buf, "\t\t%sBytes, err = marshal%sWithDepth(u.%s, nil, depth+1)\n", f.Name, f.BaseType, f.Name)
 				buf.WriteString("\t\tif err != nil { return nil, err }\n")
 				buf.WriteString("\t}\n")
 				fmt.Fprintf(&buf, "\t%sLen := len(%sBytes)\n", f.Name, f.Name)
@@ -424,6 +432,13 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		buf.WriteString("// WARNING: Unmarshaled strings and slices point directly into buf.\n")
 		buf.WriteString("// The input buf MUST outlive the returned structure u to prevent use-after-free corruption.\n")
 		fmt.Fprintf(&buf, "func Unmarshal%s(buf []byte, u *%s) error {\n", s.Name, s.Name)
+		fmt.Fprintf(&buf, "\treturn unmarshal%sWithDepth(buf, u, 0)\n", s.Name)
+		buf.WriteString("}\n\n")
+
+		fmt.Fprintf(&buf, "func unmarshal%sWithDepth(buf []byte, u *%s, depth int) error {\n", s.Name, s.Name)
+		fmt.Fprintf(&buf, "\tif depth > %sDefaultMaxDepth {\n", prefix)
+		fmt.Fprintf(&buf, "\t\treturn %sErrMaxDepthExceeded\n", prefix)
+		buf.WriteString("\t}\n")
 		fmt.Fprintf(&buf, "\tif len(buf) < 8 {\n")
 		fmt.Fprintf(&buf, "\t\treturn %sErrBufferTooShort\n", prefix)
 		buf.WriteString("\t}\n")
@@ -543,7 +558,7 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 				fmt.Fprintf(&buf, "\t\t\tif u.%s == nil {\n", f.Name)
 				fmt.Fprintf(&buf, "\t\t\t\tu.%s = new(%s)\n", f.Name, f.BaseType)
 				buf.WriteString("\t\t\t}\n")
-				fmt.Fprintf(&buf, "\t\t\terr := Unmarshal%s(buf[mirror.%s:], u.%s)\n", f.BaseType, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\t\terr := unmarshal%sWithDepth(buf[mirror.%s:], u.%s, depth+1)\n", f.BaseType, f.Name, f.Name)
 				buf.WriteString("\t\t\tif err != nil { return err }\n")
 				buf.WriteString("\t\t} else {\n")
 				fmt.Fprintf(&buf, "\t\t\tu.%s = nil\n", f.Name)
@@ -556,6 +571,13 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		fmt.Fprintf(&buf, "\n\treturn nil\n}\n\n")
 		fmt.Fprintf(&buf, "// Clone creates a deep-copy of %s, allocating fresh memory for all string and slice fields.\n", s.Name)
 		fmt.Fprintf(&buf, "func (u *%s) Clone() *%s {\n", s.Name, s.Name)
+		buf.WriteString("\treturn u.cloneWithDepth(0)\n")
+		buf.WriteString("}\n\n")
+
+		fmt.Fprintf(&buf, "func (u *%s) cloneWithDepth(depth int) *%s {\n", s.Name, s.Name)
+		fmt.Fprintf(&buf, "\tif u == nil || depth > %sDefaultMaxDepth {\n", prefix)
+		buf.WriteString("\t\treturn nil\n")
+		buf.WriteString("\t}\n")
 		fmt.Fprintf(&buf, "\tres := new(%s)\n", s.Name)
 		for _, f := range s.Fields {
 			switch f.Kind {
@@ -584,7 +606,7 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 				fmt.Fprintf(&buf, "\tres.%s = %sCloneAny(u.%s)\n", f.Name, prefix, f.Name)
 			case TypeStructPtr:
 				fmt.Fprintf(&buf, "\tif u.%s != nil {\n", f.Name)
-				fmt.Fprintf(&buf, "\t\tres.%s = u.%s.Clone()\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\tres.%s = u.%s.cloneWithDepth(depth+1)\n", f.Name, f.Name)
 				buf.WriteString("\t}\n")
 			}
 		}

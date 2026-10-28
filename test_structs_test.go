@@ -27,3 +27,9 @@ type OuterMessage struct {
 	SeqNum uint64
 	Body   *NestedPayload
 }
+
+//litz:generate
+type RecursiveNode struct {
+	Val  int64
+	Next *RecursiveNode
+}

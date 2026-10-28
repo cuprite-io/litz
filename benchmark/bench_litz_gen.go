@@ -21,7 +21,15 @@ var _ [int(unsafe.Sizeof(smallLitzPayloadLitzMirror{})) - int(unsafe.Sizeof(Smal
 var _ [int(unsafe.Offsetof(SmallLitzPayload{}.ID)) - int(unsafe.Offsetof(smallLitzPayloadLitzMirror{}.ID))]byte
 var _ [int(unsafe.Offsetof(smallLitzPayloadLitzMirror{}.ID)) - int(unsafe.Offsetof(SmallLitzPayload{}.ID))]byte
 
+// MarshalSmallLitzPayload serializes SmallLitzPayload into buf using SBC-IPR.
 func MarshalSmallLitzPayload(u *SmallLitzPayload, buf []byte) ([]byte, error) {
+	return marshalSmallLitzPayloadWithDepth(u, buf, 0)
+}
+
+func marshalSmallLitzPayloadWithDepth(u *SmallLitzPayload, buf []byte, depth int) ([]byte, error) {
+	if depth > litz.DefaultMaxDepth {
+		return nil, litz.ErrMaxDepthExceeded
+	}
 	fixedSize := int(unsafe.Sizeof(smallLitzPayloadLitzMirror{}))
 	totalSize := 8 + fixedSize
 
@@ -51,6 +59,13 @@ func MarshalSmallLitzPayload(u *SmallLitzPayload, buf []byte) ([]byte, error) {
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalSmallLitzPayload(buf []byte, u *SmallLitzPayload) error {
+	return unmarshalSmallLitzPayloadWithDepth(buf, u, 0)
+}
+
+func unmarshalSmallLitzPayloadWithDepth(buf []byte, u *SmallLitzPayload, depth int) error {
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
 	}
@@ -81,6 +96,13 @@ func UnmarshalSmallLitzPayload(buf []byte, u *SmallLitzPayload) error {
 
 // Clone creates a deep-copy of SmallLitzPayload, allocating fresh memory for all string and slice fields.
 func (u *SmallLitzPayload) Clone() *SmallLitzPayload {
+	return u.cloneWithDepth(0)
+}
+
+func (u *SmallLitzPayload) cloneWithDepth(depth int) *SmallLitzPayload {
+	if u == nil || depth > litz.DefaultMaxDepth {
+		return nil
+	}
 	res := new(SmallLitzPayload)
 	res.ID = u.ID
 	return res
@@ -109,7 +131,15 @@ var _ [int(unsafe.Offsetof(mediumLitzPayloadLitzMirror{}.Active)) - int(unsafe.O
 var _ [int(unsafe.Offsetof(MediumLitzPayload{}.Clicks)) - int(unsafe.Offsetof(mediumLitzPayloadLitzMirror{}.Clicks))]byte
 var _ [int(unsafe.Offsetof(mediumLitzPayloadLitzMirror{}.Clicks)) - int(unsafe.Offsetof(MediumLitzPayload{}.Clicks))]byte
 
+// MarshalMediumLitzPayload serializes MediumLitzPayload into buf using SBC-IPR.
 func MarshalMediumLitzPayload(u *MediumLitzPayload, buf []byte) ([]byte, error) {
+	return marshalMediumLitzPayloadWithDepth(u, buf, 0)
+}
+
+func marshalMediumLitzPayloadWithDepth(u *MediumLitzPayload, buf []byte, depth int) ([]byte, error) {
+	if depth > litz.DefaultMaxDepth {
+		return nil, litz.ErrMaxDepthExceeded
+	}
 	fixedSize := int(unsafe.Sizeof(mediumLitzPayloadLitzMirror{}))
 	totalSize := 8 + fixedSize
 
@@ -154,6 +184,13 @@ func MarshalMediumLitzPayload(u *MediumLitzPayload, buf []byte) ([]byte, error) 
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalMediumLitzPayload(buf []byte, u *MediumLitzPayload) error {
+	return unmarshalMediumLitzPayloadWithDepth(buf, u, 0)
+}
+
+func unmarshalMediumLitzPayloadWithDepth(buf []byte, u *MediumLitzPayload, depth int) error {
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
 	}
@@ -206,6 +243,13 @@ func UnmarshalMediumLitzPayload(buf []byte, u *MediumLitzPayload) error {
 
 // Clone creates a deep-copy of MediumLitzPayload, allocating fresh memory for all string and slice fields.
 func (u *MediumLitzPayload) Clone() *MediumLitzPayload {
+	return u.cloneWithDepth(0)
+}
+
+func (u *MediumLitzPayload) cloneWithDepth(depth int) *MediumLitzPayload {
+	if u == nil || depth > litz.DefaultMaxDepth {
+		return nil
+	}
 	res := new(MediumLitzPayload)
 	res.ID = u.ID
 	res.Email = strings.Clone(u.Email)
@@ -251,7 +295,15 @@ var _ [int(unsafe.Offsetof(largeLitzPayloadLitzMirror{}.Tags)) - int(unsafe.Offs
 var _ [int(unsafe.Offsetof(LargeLitzPayload{}.Child)) - int(unsafe.Offsetof(largeLitzPayloadLitzMirror{}.Child))]byte
 var _ [int(unsafe.Offsetof(largeLitzPayloadLitzMirror{}.Child)) - int(unsafe.Offsetof(LargeLitzPayload{}.Child))]byte
 
+// MarshalLargeLitzPayload serializes LargeLitzPayload into buf using SBC-IPR.
 func MarshalLargeLitzPayload(u *LargeLitzPayload, buf []byte) ([]byte, error) {
+	return marshalLargeLitzPayloadWithDepth(u, buf, 0)
+}
+
+func marshalLargeLitzPayloadWithDepth(u *LargeLitzPayload, buf []byte, depth int) ([]byte, error) {
+	if depth > litz.DefaultMaxDepth {
+		return nil, litz.ErrMaxDepthExceeded
+	}
 	fixedSize := int(unsafe.Sizeof(largeLitzPayloadLitzMirror{}))
 	totalSize := 8 + fixedSize
 
@@ -291,7 +343,7 @@ func MarshalLargeLitzPayload(u *LargeLitzPayload, buf []byte) ([]byte, error) {
 	var ChildBytes []byte
 	if u.Child != nil {
 		var err error
-		ChildBytes, err = MarshalMediumLitzPayload(u.Child, nil)
+		ChildBytes, err = marshalMediumLitzPayloadWithDepth(u.Child, nil, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -373,6 +425,13 @@ func MarshalLargeLitzPayload(u *LargeLitzPayload, buf []byte) ([]byte, error) {
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalLargeLitzPayload(buf []byte, u *LargeLitzPayload) error {
+	return unmarshalLargeLitzPayloadWithDepth(buf, u, 0)
+}
+
+func unmarshalLargeLitzPayloadWithDepth(buf []byte, u *LargeLitzPayload, depth int) error {
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
 	}
@@ -467,7 +526,7 @@ func UnmarshalLargeLitzPayload(buf []byte, u *LargeLitzPayload) error {
 			if u.Child == nil {
 				u.Child = new(MediumLitzPayload)
 			}
-			err := UnmarshalMediumLitzPayload(buf[mirror.Child:], u.Child)
+			err := unmarshalMediumLitzPayloadWithDepth(buf[mirror.Child:], u.Child, depth+1)
 			if err != nil {
 				return err
 			}
@@ -481,6 +540,13 @@ func UnmarshalLargeLitzPayload(buf []byte, u *LargeLitzPayload) error {
 
 // Clone creates a deep-copy of LargeLitzPayload, allocating fresh memory for all string and slice fields.
 func (u *LargeLitzPayload) Clone() *LargeLitzPayload {
+	return u.cloneWithDepth(0)
+}
+
+func (u *LargeLitzPayload) cloneWithDepth(depth int) *LargeLitzPayload {
+	if u == nil || depth > litz.DefaultMaxDepth {
+		return nil
+	}
 	res := new(LargeLitzPayload)
 	res.ID = u.ID
 	res.Name = strings.Clone(u.Name)
@@ -496,7 +562,7 @@ func (u *LargeLitzPayload) Clone() *LargeLitzPayload {
 		}
 	}
 	if u.Child != nil {
-		res.Child = u.Child.Clone()
+		res.Child = u.Child.cloneWithDepth(depth + 1)
 	}
 	return res
 }

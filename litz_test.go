@@ -631,6 +631,16 @@ func TestGeneratedUnmarshalAcceptsEmptyMirror(t *testing.T) {
 			t.Fatalf("output = %+v, want zero value", out)
 		}
 	})
+
+	t.Run("RecursiveNode", func(t *testing.T) {
+		var out RecursiveNode
+		if err := UnmarshalRecursiveNode(header(), &out); err != nil {
+			t.Fatalf("UnmarshalRecursiveNode failed: %v", err)
+		}
+		if out.Val != 0 || out.Next != nil {
+			t.Fatalf("output = %+v, want zero value", out)
+		}
+	})
 }
 
 func TestUnmarshalNestedPayloadRejectsMalformedStringHeaders(t *testing.T) {
@@ -788,6 +798,191 @@ func TestMarshalZeroLengthCapacityBuffer(t *testing.T) {
 		}
 		if decoded.SeqNum != 777 || decoded.Body == nil || len(decoded.Body.Tags) != 1 || decoded.Body.Tags[0] != "msg" {
 			t.Fatalf("decoded OuterMessage mismatch: %+v", decoded)
+		}
+	})
+
+	t.Run("RecursiveNode", func(t *testing.T) {
+		input := &RecursiveNode{Val: 99}
+		buf := make([]byte, 0, 1024)
+		out, err := MarshalRecursiveNode(input, buf)
+		if err != nil {
+			t.Fatalf("MarshalRecursiveNode failed: %v", err)
+		}
+		if &out[0] != &buf[:1024][0] {
+			t.Fatalf("expected Marshal to reuse backing array of aligned slice")
+		}
+		var decoded RecursiveNode
+		if err := UnmarshalRecursiveNode(out, &decoded); err != nil {
+			t.Fatalf("UnmarshalRecursiveNode failed: %v", err)
+		}
+		if decoded.Val != 99 || decoded.Next != nil {
+			t.Fatalf("decoded RecursiveNode mismatch: %+v", decoded)
+		}
+	})
+}
+
+func TestRecursionLimits_MarshalAny(t *testing.T) {
+	t.Run("CyclicMap", func(t *testing.T) {
+		m := make(map[string]any)
+		m["self"] = m
+		_, _, err := litz.MarshalAny(m)
+		if err != litz.ErrMaxDepthExceeded {
+			t.Fatalf("MarshalAny on cyclic map error = %v, want %v", err, litz.ErrMaxDepthExceeded)
+		}
+	})
+
+	t.Run("CyclicSlice", func(t *testing.T) {
+		s := make([]any, 1)
+		s[0] = s
+		_, _, err := litz.MarshalAny(s)
+		if err != litz.ErrMaxDepthExceeded {
+			t.Fatalf("MarshalAny on cyclic slice error = %v, want %v", err, litz.ErrMaxDepthExceeded)
+		}
+	})
+
+	t.Run("DeeplyNestedMap", func(t *testing.T) {
+		root := make(map[string]any)
+		curr := root
+		for i := 0; i < litz.DefaultMaxDepth+5; i++ {
+			next := make(map[string]any)
+			curr["child"] = next
+			curr = next
+		}
+		_, _, err := litz.MarshalAny(root)
+		if err != litz.ErrMaxDepthExceeded {
+			t.Fatalf("MarshalAny on deeply nested map error = %v, want %v", err, litz.ErrMaxDepthExceeded)
+		}
+	})
+
+	t.Run("ValidNestedMap", func(t *testing.T) {
+		root := make(map[string]any)
+		curr := root
+		for i := 0; i < 5; i++ {
+			next := make(map[string]any)
+			curr["child"] = next
+			curr = next
+		}
+		curr["val"] = "leaf"
+		buf, valType, err := litz.MarshalAny(root)
+		if err != nil {
+			t.Fatalf("MarshalAny failed on valid nested map: %v", err)
+		}
+		dyn := litz.NewDynamic(buf, valType)
+		res := dyn.Interface()
+		if res == nil {
+			t.Fatalf("dyn.Interface returned nil for valid map")
+		}
+	})
+}
+
+func TestRecursionLimits_CloneAny(t *testing.T) {
+	t.Run("CyclicMap", func(t *testing.T) {
+		m := make(map[string]any)
+		m["self"] = m
+		// Should terminate cleanly and not panic with stack overflow
+		cloned := litz.CloneAny(m)
+		if cloned == nil {
+			t.Fatalf("expected non-nil top-level cloned map")
+		}
+	})
+
+	t.Run("CyclicSlice", func(t *testing.T) {
+		s := make([]any, 1)
+		s[0] = s
+		// Should terminate cleanly and not panic with stack overflow
+		cloned := litz.CloneAny(s)
+		if cloned == nil {
+			t.Fatalf("expected non-nil top-level cloned slice")
+		}
+	})
+}
+
+func TestRecursionLimits_DynamicInterface(t *testing.T) {
+	t.Run("DeeplyNestedDynamicMap", func(t *testing.T) {
+		root := make(map[string]any)
+		curr := root
+		for i := 0; i < 10; i++ {
+			next := make(map[string]any)
+			curr["child"] = next
+			curr = next
+		}
+		curr["val"] = int64(123)
+
+		buf, valType, err := litz.MarshalAny(root)
+		if err != nil {
+			t.Fatalf("MarshalAny failed: %v", err)
+		}
+		dyn := litz.NewDynamic(buf, valType)
+		val := dyn.Interface()
+		if val == nil {
+			t.Fatalf("dyn.Interface failed on nested dynamic map")
+		}
+	})
+}
+
+func TestRecursionLimits_RecursiveNode(t *testing.T) {
+	t.Run("CyclicMarshal", func(t *testing.T) {
+		n := &RecursiveNode{Val: 1}
+		n.Next = n // cycle!
+		_, err := MarshalRecursiveNode(n, nil)
+		if err != litz.ErrMaxDepthExceeded {
+			t.Fatalf("MarshalRecursiveNode on cyclic struct error = %v, want %v", err, litz.ErrMaxDepthExceeded)
+		}
+	})
+
+	t.Run("CyclicClone", func(t *testing.T) {
+		n := &RecursiveNode{Val: 1}
+		n.Next = n // cycle!
+		// Clone should terminate cleanly without stack overflow
+		cloned := n.Clone()
+		if cloned == nil {
+			t.Fatalf("expected non-nil top-level cloned struct")
+		}
+	})
+
+	t.Run("DeeplyNestedNodes", func(t *testing.T) {
+		root := &RecursiveNode{Val: 0}
+		curr := root
+		for i := 1; i <= litz.DefaultMaxDepth+5; i++ {
+			curr.Next = &RecursiveNode{Val: int64(i)}
+			curr = curr.Next
+		}
+		_, err := MarshalRecursiveNode(root, nil)
+		if err != litz.ErrMaxDepthExceeded {
+			t.Fatalf("MarshalRecursiveNode on deeply nested nodes error = %v, want %v", err, litz.ErrMaxDepthExceeded)
+		}
+	})
+
+	t.Run("ValidNestedNodes", func(t *testing.T) {
+		root := &RecursiveNode{Val: 0}
+		curr := root
+		for i := 1; i <= 5; i++ {
+			curr.Next = &RecursiveNode{Val: int64(i)}
+			curr = curr.Next
+		}
+		buf, err := MarshalRecursiveNode(root, nil)
+		if err != nil {
+			t.Fatalf("MarshalRecursiveNode failed: %v", err)
+		}
+		var decoded RecursiveNode
+		if err := UnmarshalRecursiveNode(buf, &decoded); err != nil {
+			t.Fatalf("UnmarshalRecursiveNode failed: %v", err)
+		}
+		if decoded.Val != 0 || decoded.Next == nil || decoded.Next.Val != 1 {
+			t.Fatalf("decoded RecursiveNode mismatch: %+v", decoded)
+		}
+	})
+
+	t.Run("MaxDepthExceededInUnmarshal", func(t *testing.T) {
+		node := &RecursiveNode{Val: 1}
+		buf, err := MarshalRecursiveNode(node, nil)
+		if err != nil {
+			t.Fatalf("MarshalRecursiveNode failed: %v", err)
+		}
+		var out RecursiveNode
+		err = unmarshalRecursiveNodeWithDepth(buf, &out, litz.DefaultMaxDepth+1)
+		if err != litz.ErrMaxDepthExceeded {
+			t.Fatalf("expected ErrMaxDepthExceeded, got %v", err)
 		}
 	})
 }

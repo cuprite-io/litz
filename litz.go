@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.1.9"
+const Version = "v0.1.10"
 
 // HIBI Type Constants
 const (
@@ -40,7 +40,13 @@ var (
 	ErrInvalidHeader      = errors.New("litz.Unmarshal: invalid format signature or version")
 	ErrChecksumMismatch   = errors.New("litz.Unmarshal: checksum validation mismatch")
 	ErrInvalidHIBIType    = errors.New("litz.Dynamic: invalid type for this operation")
+	ErrMaxDepthExceeded   = errors.New("litz: maximum recursion depth exceeded")
 )
+
+// DefaultMaxDepth is the default maximum recursion depth allowed during
+// serialization, deserialization, cloning, and dynamic interface conversion
+// to prevent stack exhaustion from cyclic or maliciously crafted payloads.
+const DefaultMaxDepth = 64
 
 // AlignedBuffer allocates a byte slice. Go's runtime allocator aligns heap
 // allocations to 8-byte boundaries automatically for sizes >= 8 bytes.
@@ -424,7 +430,11 @@ func (d *Dynamic) Slice() []*Dynamic {
 
 // CloneAny performs a deep copy of common interface{} types to prevent use-after-free.
 func CloneAny(v any) any {
-	if v == nil {
+	return cloneAnyWithDepth(v, 0)
+}
+
+func cloneAnyWithDepth(v any, depth int) any {
+	if depth > DefaultMaxDepth || v == nil {
 		return nil
 	}
 	switch val := v.(type) {
@@ -444,7 +454,7 @@ func CloneAny(v any) any {
 	case map[string]any:
 		m := make(map[string]any, len(val))
 		for k, valItem := range val {
-			m[k] = CloneAny(valItem)
+			m[k] = cloneAnyWithDepth(valItem, depth+1)
 		}
 		return m
 	default:
@@ -453,7 +463,7 @@ func CloneAny(v any) any {
 		if rv.Kind() == reflect.Slice {
 			resSlice := reflect.MakeSlice(rv.Type(), rv.Len(), rv.Len())
 			for i := 0; i < rv.Len(); i++ {
-				clonedVal := CloneAny(rv.Index(i).Interface())
+				clonedVal := cloneAnyWithDepth(rv.Index(i).Interface(), depth+1)
 				if clonedVal != nil {
 					resSlice.Index(i).Set(reflect.ValueOf(clonedVal))
 				}
@@ -475,6 +485,13 @@ type hibiKeyValue struct {
 // MarshalAny serializes any Go value into the HIBI format.
 // Returns the serialized bytes, type identifier, and error.
 func MarshalAny(v any) ([]byte, uint8, error) {
+	return marshalAnyWithDepth(v, 0)
+}
+
+func marshalAnyWithDepth(v any, depth int) ([]byte, uint8, error) {
+	if depth > DefaultMaxDepth {
+		return nil, TypeNull, ErrMaxDepthExceeded
+	}
 	if v == nil {
 		return []byte{}, TypeNull, nil
 	}
@@ -556,7 +573,7 @@ func MarshalAny(v any) ([]byte, uint8, error) {
 		}
 		return val.buf, val.valType, nil
 	case map[string]any:
-		b, err := marshalMap(val)
+		b, err := marshalMap(val, depth)
 		return b, TypeMap, err
 	default:
 		// Reflection fallback for other types (e.g. slices, structs)
@@ -569,18 +586,18 @@ func MarshalAny(v any) ([]byte, uint8, error) {
 			for _, key := range rv.MapKeys() {
 				m[key.String()] = rv.MapIndex(key).Interface()
 			}
-			b, err := marshalMap(m)
+			b, err := marshalMap(m, depth)
 			return b, TypeMap, err
 		}
 		if rv.Kind() == reflect.Slice {
-			b, err := marshalSlice(rv)
+			b, err := marshalSlice(rv, depth)
 			return b, TypeSlice, err
 		}
 		return nil, TypeNull, fmt.Errorf("litz.MarshalAny: unsupported type %T", v)
 	}
 }
 
-func marshalMap(m map[string]any) ([]byte, error) {
+func marshalMap(m map[string]any, depth int) ([]byte, error) {
 	numEntries := len(m)
 	if numEntries == 0 {
 		buf := make([]byte, 4)
@@ -593,7 +610,7 @@ func marshalMap(m map[string]any) ([]byte, error) {
 		if len(k) > 255 {
 			return nil, fmt.Errorf("litz.marshalMap: key length %d exceeds maximum of 255 bytes", len(k))
 		}
-		valBytes, valType, err := MarshalAny(v)
+		valBytes, valType, err := marshalAnyWithDepth(v, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -658,7 +675,7 @@ func marshalMap(m map[string]any) ([]byte, error) {
 	return buf, nil
 }
 
-func marshalSlice(rv reflect.Value) ([]byte, error) {
+func marshalSlice(rv reflect.Value, depth int) ([]byte, error) {
 	numElements := rv.Len()
 	if numElements == 0 {
 		buf := make([]byte, 4)
@@ -680,7 +697,7 @@ func marshalSlice(rv reflect.Value) ([]byte, error) {
 	var eltType uint8 = TypeNull
 	totalPayloadSize := 0
 	for i := 0; i < numElements; i++ {
-		b, t, err := MarshalAny(rv.Index(i).Interface())
+		b, t, err := marshalAnyWithDepth(rv.Index(i).Interface(), depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -761,11 +778,15 @@ func (d *Dynamic) Interface() any {
 	if d == nil {
 		return nil
 	}
-	return d.interfaceValue()
+	return d.interfaceValueWithDepth(0)
 }
 
 func (d Dynamic) interfaceValue() any {
-	if len(d.buf) == 0 {
+	return d.interfaceValueWithDepth(0)
+}
+
+func (d Dynamic) interfaceValueWithDepth(depth int) any {
+	if depth > DefaultMaxDepth || len(d.buf) == 0 {
 		return nil
 	}
 	switch d.valType {
@@ -788,7 +809,7 @@ func (d Dynamic) interfaceValue() any {
 		m := make(map[string]any, len(keys))
 		for _, k := range keys {
 			if val, ok := d.GetView(k); ok {
-				m[k] = val.interfaceValue()
+				m[k] = val.interfaceValueWithDepth(depth + 1)
 			}
 		}
 		return m
@@ -797,7 +818,7 @@ func (d Dynamic) interfaceValue() any {
 		s := make([]any, len(elements))
 		for i, el := range elements {
 			if el != nil {
-				s[i] = el.interfaceValue()
+				s[i] = el.interfaceValueWithDepth(depth + 1)
 			}
 		}
 		return s

@@ -21,7 +21,15 @@ var _ [int(unsafe.Sizeof(singleKeyLitzMirror{})) - int(unsafe.Sizeof(SingleKey{}
 var _ [int(unsafe.Offsetof(SingleKey{}.ID)) - int(unsafe.Offsetof(singleKeyLitzMirror{}.ID))]byte
 var _ [int(unsafe.Offsetof(singleKeyLitzMirror{}.ID)) - int(unsafe.Offsetof(SingleKey{}.ID))]byte
 
+// MarshalSingleKey serializes SingleKey into buf using SBC-IPR.
 func MarshalSingleKey(u *SingleKey, buf []byte) ([]byte, error) {
+	return marshalSingleKeyWithDepth(u, buf, 0)
+}
+
+func marshalSingleKeyWithDepth(u *SingleKey, buf []byte, depth int) ([]byte, error) {
+	if depth > litz.DefaultMaxDepth {
+		return nil, litz.ErrMaxDepthExceeded
+	}
 	fixedSize := int(unsafe.Sizeof(singleKeyLitzMirror{}))
 	totalSize := 8 + fixedSize
 
@@ -51,6 +59,13 @@ func MarshalSingleKey(u *SingleKey, buf []byte) ([]byte, error) {
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalSingleKey(buf []byte, u *SingleKey) error {
+	return unmarshalSingleKeyWithDepth(buf, u, 0)
+}
+
+func unmarshalSingleKeyWithDepth(buf []byte, u *SingleKey, depth int) error {
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
 	}
@@ -81,6 +96,13 @@ func UnmarshalSingleKey(buf []byte, u *SingleKey) error {
 
 // Clone creates a deep-copy of SingleKey, allocating fresh memory for all string and slice fields.
 func (u *SingleKey) Clone() *SingleKey {
+	return u.cloneWithDepth(0)
+}
+
+func (u *SingleKey) cloneWithDepth(depth int) *SingleKey {
+	if u == nil || depth > litz.DefaultMaxDepth {
+		return nil
+	}
 	res := new(SingleKey)
 	res.ID = u.ID
 	return res
@@ -109,7 +131,15 @@ var _ [int(unsafe.Offsetof(userProfileLitzMirror{}.Name)) - int(unsafe.Offsetof(
 var _ [int(unsafe.Offsetof(UserProfile{}.Active)) - int(unsafe.Offsetof(userProfileLitzMirror{}.Active))]byte
 var _ [int(unsafe.Offsetof(userProfileLitzMirror{}.Active)) - int(unsafe.Offsetof(UserProfile{}.Active))]byte
 
+// MarshalUserProfile serializes UserProfile into buf using SBC-IPR.
 func MarshalUserProfile(u *UserProfile, buf []byte) ([]byte, error) {
+	return marshalUserProfileWithDepth(u, buf, 0)
+}
+
+func marshalUserProfileWithDepth(u *UserProfile, buf []byte, depth int) ([]byte, error) {
+	if depth > litz.DefaultMaxDepth {
+		return nil, litz.ErrMaxDepthExceeded
+	}
 	fixedSize := int(unsafe.Sizeof(userProfileLitzMirror{}))
 	totalSize := 8 + fixedSize
 
@@ -154,6 +184,13 @@ func MarshalUserProfile(u *UserProfile, buf []byte) ([]byte, error) {
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalUserProfile(buf []byte, u *UserProfile) error {
+	return unmarshalUserProfileWithDepth(buf, u, 0)
+}
+
+func unmarshalUserProfileWithDepth(buf []byte, u *UserProfile, depth int) error {
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
 	}
@@ -206,6 +243,13 @@ func UnmarshalUserProfile(buf []byte, u *UserProfile) error {
 
 // Clone creates a deep-copy of UserProfile, allocating fresh memory for all string and slice fields.
 func (u *UserProfile) Clone() *UserProfile {
+	return u.cloneWithDepth(0)
+}
+
+func (u *UserProfile) cloneWithDepth(depth int) *UserProfile {
+	if u == nil || depth > litz.DefaultMaxDepth {
+		return nil
+	}
 	res := new(UserProfile)
 	res.Age = u.Age
 	res.Score = u.Score
@@ -253,14 +297,22 @@ var _ [int(unsafe.Offsetof(nestedPayloadLitzMirror{}.Numbers)) - int(unsafe.Offs
 var _ [int(unsafe.Offsetof(NestedPayload{}.Signature)) - int(unsafe.Offsetof(nestedPayloadLitzMirror{}.Signature))]byte
 var _ [int(unsafe.Offsetof(nestedPayloadLitzMirror{}.Signature)) - int(unsafe.Offsetof(NestedPayload{}.Signature))]byte
 
+// MarshalNestedPayload serializes NestedPayload into buf using SBC-IPR.
 func MarshalNestedPayload(u *NestedPayload, buf []byte) ([]byte, error) {
+	return marshalNestedPayloadWithDepth(u, buf, 0)
+}
+
+func marshalNestedPayloadWithDepth(u *NestedPayload, buf []byte, depth int) ([]byte, error) {
+	if depth > litz.DefaultMaxDepth {
+		return nil, litz.ErrMaxDepthExceeded
+	}
 	fixedSize := int(unsafe.Sizeof(nestedPayloadLitzMirror{}))
 	totalSize := 8 + fixedSize
 
 	var ProfileBytes []byte
 	if u.Profile != nil {
 		var err error
-		ProfileBytes, err = MarshalUserProfile(u.Profile, nil)
+		ProfileBytes, err = marshalUserProfileWithDepth(u.Profile, nil, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -389,6 +441,13 @@ func MarshalNestedPayload(u *NestedPayload, buf []byte) ([]byte, error) {
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalNestedPayload(buf []byte, u *NestedPayload) error {
+	return unmarshalNestedPayloadWithDepth(buf, u, 0)
+}
+
+func unmarshalNestedPayloadWithDepth(buf []byte, u *NestedPayload, depth int) error {
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
 	}
@@ -439,7 +498,7 @@ func UnmarshalNestedPayload(buf []byte, u *NestedPayload) error {
 			if u.Profile == nil {
 				u.Profile = new(UserProfile)
 			}
-			err := UnmarshalUserProfile(buf[mirror.Profile:], u.Profile)
+			err := unmarshalUserProfileWithDepth(buf[mirror.Profile:], u.Profile, depth+1)
 			if err != nil {
 				return err
 			}
@@ -499,9 +558,16 @@ func UnmarshalNestedPayload(buf []byte, u *NestedPayload) error {
 
 // Clone creates a deep-copy of NestedPayload, allocating fresh memory for all string and slice fields.
 func (u *NestedPayload) Clone() *NestedPayload {
+	return u.cloneWithDepth(0)
+}
+
+func (u *NestedPayload) cloneWithDepth(depth int) *NestedPayload {
+	if u == nil || depth > litz.DefaultMaxDepth {
+		return nil
+	}
 	res := new(NestedPayload)
 	if u.Profile != nil {
-		res.Profile = u.Profile.Clone()
+		res.Profile = u.Profile.cloneWithDepth(depth + 1)
 	}
 	res.Metadata = litz.CloneAny(u.Metadata)
 	if u.Tags != nil {
@@ -535,14 +601,22 @@ var _ [int(unsafe.Offsetof(outerMessageLitzMirror{}.SeqNum)) - int(unsafe.Offset
 var _ [int(unsafe.Offsetof(OuterMessage{}.Body)) - int(unsafe.Offsetof(outerMessageLitzMirror{}.Body))]byte
 var _ [int(unsafe.Offsetof(outerMessageLitzMirror{}.Body)) - int(unsafe.Offsetof(OuterMessage{}.Body))]byte
 
+// MarshalOuterMessage serializes OuterMessage into buf using SBC-IPR.
 func MarshalOuterMessage(u *OuterMessage, buf []byte) ([]byte, error) {
+	return marshalOuterMessageWithDepth(u, buf, 0)
+}
+
+func marshalOuterMessageWithDepth(u *OuterMessage, buf []byte, depth int) ([]byte, error) {
+	if depth > litz.DefaultMaxDepth {
+		return nil, litz.ErrMaxDepthExceeded
+	}
 	fixedSize := int(unsafe.Sizeof(outerMessageLitzMirror{}))
 	totalSize := 8 + fixedSize
 
 	var BodyBytes []byte
 	if u.Body != nil {
 		var err error
-		BodyBytes, err = MarshalNestedPayload(u.Body, nil)
+		BodyBytes, err = marshalNestedPayloadWithDepth(u.Body, nil, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -589,6 +663,13 @@ func MarshalOuterMessage(u *OuterMessage, buf []byte) ([]byte, error) {
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalOuterMessage(buf []byte, u *OuterMessage) error {
+	return unmarshalOuterMessageWithDepth(buf, u, 0)
+}
+
+func unmarshalOuterMessageWithDepth(buf []byte, u *OuterMessage, depth int) error {
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
 	if len(buf) < 8 {
 		return litz.ErrBufferTooShort
 	}
@@ -623,7 +704,7 @@ func UnmarshalOuterMessage(buf []byte, u *OuterMessage) error {
 			if u.Body == nil {
 				u.Body = new(NestedPayload)
 			}
-			err := UnmarshalNestedPayload(buf[mirror.Body:], u.Body)
+			err := unmarshalNestedPayloadWithDepth(buf[mirror.Body:], u.Body, depth+1)
 			if err != nil {
 				return err
 			}
@@ -637,10 +718,163 @@ func UnmarshalOuterMessage(buf []byte, u *OuterMessage) error {
 
 // Clone creates a deep-copy of OuterMessage, allocating fresh memory for all string and slice fields.
 func (u *OuterMessage) Clone() *OuterMessage {
+	return u.cloneWithDepth(0)
+}
+
+func (u *OuterMessage) cloneWithDepth(depth int) *OuterMessage {
+	if u == nil || depth > litz.DefaultMaxDepth {
+		return nil
+	}
 	res := new(OuterMessage)
 	res.SeqNum = u.SeqNum
 	if u.Body != nil {
-		res.Body = u.Body.Clone()
+		res.Body = u.Body.cloneWithDepth(depth + 1)
+	}
+	return res
+}
+
+// recursiveNodeLitzMirror is the GC-safe layout mirror for RecursiveNode
+type recursiveNodeLitzMirror struct {
+	Val  int64
+	Next uintptr
+}
+
+// Compile-time size assertions to guarantee layout identity
+var _ [int(unsafe.Sizeof(RecursiveNode{})) - int(unsafe.Sizeof(recursiveNodeLitzMirror{}))]byte
+var _ [int(unsafe.Sizeof(recursiveNodeLitzMirror{})) - int(unsafe.Sizeof(RecursiveNode{}))]byte
+var _ [int(unsafe.Offsetof(RecursiveNode{}.Val)) - int(unsafe.Offsetof(recursiveNodeLitzMirror{}.Val))]byte
+var _ [int(unsafe.Offsetof(recursiveNodeLitzMirror{}.Val)) - int(unsafe.Offsetof(RecursiveNode{}.Val))]byte
+var _ [int(unsafe.Offsetof(RecursiveNode{}.Next)) - int(unsafe.Offsetof(recursiveNodeLitzMirror{}.Next))]byte
+var _ [int(unsafe.Offsetof(recursiveNodeLitzMirror{}.Next)) - int(unsafe.Offsetof(RecursiveNode{}.Next))]byte
+
+// MarshalRecursiveNode serializes RecursiveNode into buf using SBC-IPR.
+func MarshalRecursiveNode(u *RecursiveNode, buf []byte) ([]byte, error) {
+	return marshalRecursiveNodeWithDepth(u, buf, 0)
+}
+
+func marshalRecursiveNodeWithDepth(u *RecursiveNode, buf []byte, depth int) ([]byte, error) {
+	if depth > litz.DefaultMaxDepth {
+		return nil, litz.ErrMaxDepthExceeded
+	}
+	fixedSize := int(unsafe.Sizeof(recursiveNodeLitzMirror{}))
+	totalSize := 8 + fixedSize
+
+	var NextBytes []byte
+	if u.Next != nil {
+		var err error
+		NextBytes, err = marshalRecursiveNodeWithDepth(u.Next, nil, depth+1)
+		if err != nil {
+			return nil, err
+		}
+	}
+	NextLen := len(NextBytes)
+	if totalSize+NextLen < totalSize {
+		return nil, litz.ErrSizeOverflow
+	}
+	totalSize += NextLen
+
+	// Ensure output buffer is aligned and large enough
+	if cap(buf) < totalSize || uintptr(unsafe.Pointer(unsafe.SliceData(buf)))%8 != 0 {
+		buf = litz.AlignedBuffer(totalSize)
+	}
+	buf = buf[:totalSize]
+
+	// Write 8-byte format signature: 'LTZ0' + Version 1
+	*(*[4]byte)(unsafe.Pointer(&buf[0])) = [4]byte{'L', 'T', 'Z', '0'}
+	buf[4] = 1
+	buf[5] = 0
+	buf[6] = 0
+	buf[7] = 0
+
+	// Write directly to the buffer's mirror pointer (O1 Optimization: No stack allocation/double-copy!)
+	// Zero the fixed size header to prevent padding data leaks
+	*(*recursiveNodeLitzMirror)(unsafe.Pointer(&buf[8])) = recursiveNodeLitzMirror{}
+	mirror := (*recursiveNodeLitzMirror)(unsafe.Pointer(&buf[8]))
+
+	mirror.Val = u.Val
+	currentOffset := uintptr(8 + fixedSize)
+
+	if NextLen > 0 {
+		mirror.Next = currentOffset
+		copy(buf[currentOffset:], NextBytes)
+		currentOffset += uintptr(NextLen)
+	} else {
+		mirror.Next = 0
+	}
+
+	return buf, nil
+}
+
+// UnmarshalRecursiveNode deserializes the buffer using SBC-IPR.
+// WARNING: Unmarshaled strings and slices point directly into buf.
+// The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
+func UnmarshalRecursiveNode(buf []byte, u *RecursiveNode) error {
+	return unmarshalRecursiveNodeWithDepth(buf, u, 0)
+}
+
+func unmarshalRecursiveNodeWithDepth(buf []byte, u *RecursiveNode, depth int) error {
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
+	if len(buf) < 8 {
+		return litz.ErrBufferTooShort
+	}
+	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
+		return litz.ErrInvalidHeader
+	}
+	if len(buf) == 8 {
+		return nil
+	}
+	var mirror *recursiveNodeLitzMirror
+	if len(buf) >= 8+int(unsafe.Sizeof(recursiveNodeLitzMirror{})) {
+		mirror = (*recursiveNodeLitzMirror)(unsafe.Pointer(&buf[8]))
+	} else {
+		var mirrorStorage recursiveNodeLitzMirror
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(&mirrorStorage)), unsafe.Sizeof(recursiveNodeLitzMirror{})), buf[8:])
+		mirror = &mirrorStorage
+	}
+
+	if 8+unsafe.Offsetof(mirror.Val)+unsafe.Sizeof(mirror.Val) <= uintptr(len(buf)) {
+	}
+	if 8+unsafe.Offsetof(mirror.Next)+unsafe.Sizeof(mirror.Next) <= uintptr(len(buf)) {
+		if mirror.Next > uintptr(len(buf)) || (mirror.Next > 0 && uintptr(len(buf))-mirror.Next < unsafe.Sizeof(recursiveNodeLitzMirror{})) {
+			return litz.ErrPointerOutOfBounds
+		}
+	}
+
+	if 8+unsafe.Offsetof(mirror.Val)+unsafe.Sizeof(mirror.Val) <= uintptr(len(buf)) {
+		u.Val = mirror.Val
+	}
+	if 8+unsafe.Offsetof(mirror.Next)+unsafe.Sizeof(mirror.Next) <= uintptr(len(buf)) {
+		if mirror.Next > 0 {
+			if u.Next == nil {
+				u.Next = new(RecursiveNode)
+			}
+			err := unmarshalRecursiveNodeWithDepth(buf[mirror.Next:], u.Next, depth+1)
+			if err != nil {
+				return err
+			}
+		} else {
+			u.Next = nil
+		}
+	}
+
+	return nil
+}
+
+// Clone creates a deep-copy of RecursiveNode, allocating fresh memory for all string and slice fields.
+func (u *RecursiveNode) Clone() *RecursiveNode {
+	return u.cloneWithDepth(0)
+}
+
+func (u *RecursiveNode) cloneWithDepth(depth int) *RecursiveNode {
+	if u == nil || depth > litz.DefaultMaxDepth {
+		return nil
+	}
+	res := new(RecursiveNode)
+	res.Val = u.Val
+	if u.Next != nil {
+		res.Next = u.Next.cloneWithDepth(depth + 1)
 	}
 	return res
 }

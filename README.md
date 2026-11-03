@@ -56,7 +56,7 @@ Below is a performance comparison of Litz against **Standard Go Protobuf (v2)**,
 
 While Litz is optimized for speed, it makes several major trade-offs:
 
-1. **Architecture Portability (Little-Endian only)**: The wire format uses little-endian byte ordering directly matching host hardware registers (amd64, arm64, wasm). Paying no cost for byte-swapping means Litz is not portable to big-endian architectures.
+1. **Architecture Portability (64-Bit Little-Endian only)**: The wire format uses Single-Binary-Cast In-Place Reading (SBC-IPR) directly matching host 64-bit Go struct layouts and little-endian register ordering (`amd64`, `arm64`, `riscv64`, `ppc64le`, `loong64`, `mips64le`). 32-bit architectures (`386`, `arm`, `wasm`) and big-endian architectures (`s390x`, `mips`, `ppc64`) are explicitly unsupported and rejected at compile-time to prevent wire corruption.
 2. **Fixed-Size Fields (Larger Wire Footprint)**: Litz does not use variable-length integer encoding (varints). Numerical types are serialized as fixed 8-byte, 4-byte, or 2-byte values, leading to larger wire payloads compared to Protobuf or Msgpack.
 3. **Buffer Lifetime Coupling (Zero-Copy)**: Deserialized string and slice fields point directly into the source byte buffer. Reusing or discarding the source buffer will lead to use-after-free corruption unless the deserialized struct is explicitly duplicated via `Clone()`.
 4. **Homogeneous Slices Only**: Collection elements must share a single consistent data type. Heterogeneous (mixed-type) slices are unsupported and will reject marshaling.

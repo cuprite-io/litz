@@ -1,4 +1,4 @@
-//go:build amd64 || arm64 || 386 || arm || wasm || mips64le || ppc64le || riscv64
+//go:build amd64 || arm64 || mips64le || ppc64le || riscv64 || loong64
 
 package litz
 
@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.3.0"
+const Version = "v0.3.1"
 
 // HIBI Type Constants
 const (

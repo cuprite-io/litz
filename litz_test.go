@@ -3,8 +3,11 @@ package litz_test
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"os/exec"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
@@ -1530,5 +1533,122 @@ func TestNestedChildHeaderBoundsCheck(t *testing.T) {
 	err = UnmarshalOuterMessage(truncated, &out)
 	if err != litz.ErrPointerOutOfBounds {
 		t.Fatalf("expected ErrPointerOutOfBounds for truncated child header, got: %v", err)
+	}
+}
+
+func TestCrossArchitectureCompilation(t *testing.T) {
+	tests := []struct {
+		name        string
+		goarch      string
+		expectPass  bool
+		errContains string
+	}{
+		{name: "amd64 (supported 64-bit LE)", goarch: "amd64", expectPass: true},
+		{name: "arm64 (supported 64-bit LE)", goarch: "arm64", expectPass: true},
+		{name: "riscv64 (supported 64-bit LE)", goarch: "riscv64", expectPass: true},
+		{name: "ppc64le (supported 64-bit LE)", goarch: "ppc64le", expectPass: true},
+		{
+			name:        "386 (unsupported 32-bit)",
+			goarch:      "386",
+			expectPass:  false,
+			errContains: "build constraints exclude all Go files",
+		},
+		{
+			name:        "arm (unsupported 32-bit)",
+			goarch:      "arm",
+			expectPass:  false,
+			errContains: "build constraints exclude all Go files",
+		},
+		{
+			name:        "s390x (unsupported big-endian)",
+			goarch:      "s390x",
+			expectPass:  false,
+			errContains: "build constraints exclude all Go files",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("go", "build", "-o", os.DevNull, "github.com/cuprite-io/litz")
+			cmd.Env = append(os.Environ(), "GOARCH="+tc.goarch)
+			out, err := cmd.CombinedOutput()
+
+			if tc.expectPass {
+				if err != nil {
+					t.Fatalf("expected build to succeed for GOARCH=%s, got error: %v\nOutput: %s", tc.goarch, err, string(out))
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("expected build to fail for GOARCH=%s, but it succeeded", tc.goarch)
+				}
+				if !strings.Contains(string(out), tc.errContains) {
+					t.Fatalf("expected error output to contain %q, got:\n%s", tc.errContains, string(out))
+				}
+			}
+		})
+	}
+}
+
+func TestGoldenPayloadWireFormat(t *testing.T) {
+	// Verify SingleKey wire format exactly
+	sk := &SingleKey{ID: 0x0102030405060708}
+	skBuf, err := MarshalSingleKey(sk, nil)
+	if err != nil {
+		t.Fatalf("MarshalSingleKey failed: %v", err)
+	}
+
+	expectedSK := []byte{
+		'L', 'T', 'Z', '0', 1, 0, 0, 0, // Header
+		0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, // ID (little-endian uint64)
+	}
+	if !bytes.Equal(skBuf, expectedSK) {
+		t.Fatalf("SingleKey golden mismatch:\nexpected: %x\ngot:      %x", expectedSK, skBuf)
+	}
+
+	// Verify UserProfile golden wire bytes
+	up := &UserProfile{
+		Age:    0x11223344,
+		Score:  1.5,
+		Name:   "Hi",
+		Active: true,
+	}
+	upBuf, err := MarshalUserProfile(up, nil)
+	if err != nil {
+		t.Fatalf("MarshalUserProfile failed: %v", err)
+	}
+
+	// Expected UserProfile wire layout on 64-bit LE:
+	// 0..8:   Header 'LTZ0\x01\x00\x00\x00'
+	// 8..12:  Age uint32 = 0x44, 0x33, 0x22, 0x11
+	// 12..16: Struct alignment padding = 0, 0, 0, 0
+	// 16..24: Score float64 (1.5) = 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x3f
+	// 24..32: Name.offset uintptr = 48 (0x30, 0, 0, 0, 0, 0, 0, 0)
+	// 32..40: Name.length int = 2 (2, 0, 0, 0, 0, 0, 0, 0)
+	// 40..41: Active bool = 1
+	// 41..48: Padding = 0, 0, 0, 0, 0, 0, 0
+	// 48..50: Name string bytes = 'H', 'i'
+	// 50..56: 8-byte variable padding = 0, 0, 0, 0, 0, 0
+	expectedUP := []byte{
+		'L', 'T', 'Z', '0', 1, 0, 0, 0,
+		0x44, 0x33, 0x22, 0x11, 0, 0, 0, 0,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x3f,
+		48, 0, 0, 0, 0, 0, 0, 0,
+		2, 0, 0, 0, 0, 0, 0, 0,
+		1, 0, 0, 0, 0, 0, 0, 0,
+		'H', 'i', 0, 0, 0, 0, 0, 0,
+	}
+
+	if !bytes.Equal(upBuf, expectedUP) {
+		t.Fatalf("UserProfile golden mismatch:\nexpected (%d bytes): %x\ngot      (%d bytes): %x",
+			len(expectedUP), expectedUP, len(upBuf), upBuf)
+	}
+
+	// Unmarshal and assert roundtrip
+	var out UserProfile
+	if err := UnmarshalUserProfile(upBuf, &out); err != nil {
+		t.Fatalf("UnmarshalUserProfile failed on golden wire: %v", err)
+	}
+	if !reflect.DeepEqual(*up, out) {
+		t.Fatalf("roundtrip mismatch:\nexpected: %+v\ngot:      %+v", *up, out)
 	}
 }

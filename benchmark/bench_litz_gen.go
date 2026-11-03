@@ -67,10 +67,16 @@ func marshalSmallLitzPayloadWithDepth(u *SmallLitzPayload, buf []byte, depth int
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalSmallLitzPayload(buf []byte, u *SmallLitzPayload) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
 	return unmarshalSmallLitzPayloadWithDepth(buf, u, 0)
 }
 
 func unmarshalSmallLitzPayloadWithDepth(buf []byte, u *SmallLitzPayload, depth int) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
 	if depth > litz.DefaultMaxDepth {
 		return litz.ErrMaxDepthExceeded
 	}
@@ -83,6 +89,7 @@ func unmarshalSmallLitzPayloadWithDepth(buf []byte, u *SmallLitzPayload, depth i
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
+	*u = SmallLitzPayload{}
 	if len(buf) == 8 {
 		return nil
 	}
@@ -101,6 +108,41 @@ func unmarshalSmallLitzPayloadWithDepth(buf []byte, u *SmallLitzPayload, depth i
 	if 8+unsafe.Offsetof(mirror.ID)+unsafe.Sizeof(mirror.ID) <= uintptr(len(buf)) {
 		u.ID = mirror.ID
 	}
+
+	return nil
+}
+
+// UnmarshalSmallLitzPayloadStrict deserializes the buffer using SBC-IPR in strict mode.
+// Unlike Unmarshal, it requires the full schema to be present and rejects truncated payloads.
+// The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
+func UnmarshalSmallLitzPayloadStrict(buf []byte, u *SmallLitzPayload) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
+	return unmarshalSmallLitzPayloadStrictWithDepth(buf, u, 0)
+}
+
+func unmarshalSmallLitzPayloadStrictWithDepth(buf []byte, u *SmallLitzPayload, depth int) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
+	fixedSize := int(unsafe.Sizeof(smallLitzPayloadLitzMirror{}))
+	if len(buf) < 8+fixedSize || len(buf)%8 != 0 {
+		return litz.ErrBufferTooShort
+	}
+	if uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {
+		return litz.ErrUnalignedBuffer
+	}
+	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
+		return litz.ErrInvalidHeader
+	}
+	*u = SmallLitzPayload{}
+	mirror := (*smallLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+
+	u.ID = mirror.ID
 
 	return nil
 }
@@ -221,10 +263,16 @@ func marshalMediumLitzPayloadWithDepth(u *MediumLitzPayload, buf []byte, depth i
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalMediumLitzPayload(buf []byte, u *MediumLitzPayload) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
 	return unmarshalMediumLitzPayloadWithDepth(buf, u, 0)
 }
 
 func unmarshalMediumLitzPayloadWithDepth(buf []byte, u *MediumLitzPayload, depth int) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
 	if depth > litz.DefaultMaxDepth {
 		return litz.ErrMaxDepthExceeded
 	}
@@ -237,6 +285,7 @@ func unmarshalMediumLitzPayloadWithDepth(buf []byte, u *MediumLitzPayload, depth
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
+	*u = MediumLitzPayload{}
 	if len(buf) == 8 {
 		return nil
 	}
@@ -276,6 +325,52 @@ func unmarshalMediumLitzPayloadWithDepth(buf []byte, u *MediumLitzPayload, depth
 		} else {
 			u.Email = ""
 		}
+	}
+
+	return nil
+}
+
+// UnmarshalMediumLitzPayloadStrict deserializes the buffer using SBC-IPR in strict mode.
+// Unlike Unmarshal, it requires the full schema to be present and rejects truncated payloads.
+// The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
+func UnmarshalMediumLitzPayloadStrict(buf []byte, u *MediumLitzPayload) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
+	return unmarshalMediumLitzPayloadStrictWithDepth(buf, u, 0)
+}
+
+func unmarshalMediumLitzPayloadStrictWithDepth(buf []byte, u *MediumLitzPayload, depth int) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
+	fixedSize := int(unsafe.Sizeof(mediumLitzPayloadLitzMirror{}))
+	if len(buf) < 8+fixedSize || len(buf)%8 != 0 {
+		return litz.ErrBufferTooShort
+	}
+	if uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {
+		return litz.ErrUnalignedBuffer
+	}
+	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
+		return litz.ErrInvalidHeader
+	}
+	*u = MediumLitzPayload{}
+	mirror := (*mediumLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+
+	if mirror.Email.offset > uintptr(len(buf)) || mirror.Email.length < 0 || mirror.Email.length > len(buf)-int(mirror.Email.offset) {
+		return litz.ErrStringOutOfBounds
+	}
+
+	u.ID = mirror.ID
+	u.Active = mirror.Active
+	u.Clicks = mirror.Clicks
+	if mirror.Email.length > 0 {
+		u.Email = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Email.offset)), mirror.Email.length)
+	} else {
+		u.Email = ""
 	}
 
 	return nil
@@ -532,10 +627,16 @@ func marshalLargeLitzPayloadWithDepth(u *LargeLitzPayload, buf []byte, depth int
 // WARNING: Unmarshaled strings and slices point directly into buf.
 // The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
 func UnmarshalLargeLitzPayload(buf []byte, u *LargeLitzPayload) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
 	return unmarshalLargeLitzPayloadWithDepth(buf, u, 0)
 }
 
 func unmarshalLargeLitzPayloadWithDepth(buf []byte, u *LargeLitzPayload, depth int) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
 	if depth > litz.DefaultMaxDepth {
 		return litz.ErrMaxDepthExceeded
 	}
@@ -548,6 +649,8 @@ func unmarshalLargeLitzPayloadWithDepth(buf []byte, u *LargeLitzPayload, depth i
 	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
 		return litz.ErrInvalidHeader
 	}
+	prev_Child := u.Child
+	*u = LargeLitzPayload{}
 	if len(buf) == 8 {
 		return nil
 	}
@@ -593,13 +696,13 @@ func unmarshalLargeLitzPayloadWithDepth(buf []byte, u *LargeLitzPayload, depth i
 		}
 	}
 	if 8+unsafe.Offsetof(mirror.Child)+unsafe.Sizeof(mirror.Child) <= uintptr(len(buf)) {
-		if mirror.Child > uintptr(len(buf)) {
+		if mirror.Child > uintptr(len(buf)) || (mirror.Child > 0 && mirror.Child < 8+unsafe.Sizeof(largeLitzPayloadLitzMirror{})) {
 			return litz.ErrPointerOutOfBounds
 		}
 		if mirror.Child > 0 && mirror.Child%8 != 0 {
 			return litz.ErrUnalignedBuffer
 		}
-		if mirror.Child > 0 && uintptr(len(buf))-mirror.Child < unsafe.Sizeof(mediumLitzPayloadLitzMirror{}) {
+		if mirror.Child > 0 && uintptr(len(buf))-mirror.Child < 8+unsafe.Sizeof(mediumLitzPayloadLitzMirror{}) {
 			return litz.ErrPointerOutOfBounds
 		}
 	}
@@ -651,6 +754,7 @@ func unmarshalLargeLitzPayloadWithDepth(buf []byte, u *LargeLitzPayload, depth i
 	}
 	if 8+unsafe.Offsetof(mirror.Child)+unsafe.Sizeof(mirror.Child) <= uintptr(len(buf)) {
 		if mirror.Child > 0 {
+			u.Child = prev_Child
 			if u.Child == nil {
 				u.Child = new(MediumLitzPayload)
 			}
@@ -661,6 +765,120 @@ func unmarshalLargeLitzPayloadWithDepth(buf []byte, u *LargeLitzPayload, depth i
 		} else {
 			u.Child = nil
 		}
+	}
+
+	return nil
+}
+
+// UnmarshalLargeLitzPayloadStrict deserializes the buffer using SBC-IPR in strict mode.
+// Unlike Unmarshal, it requires the full schema to be present and rejects truncated payloads.
+// The input buf MUST outlive the returned structure u to prevent use-after-free corruption.
+func UnmarshalLargeLitzPayloadStrict(buf []byte, u *LargeLitzPayload) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
+	return unmarshalLargeLitzPayloadStrictWithDepth(buf, u, 0)
+}
+
+func unmarshalLargeLitzPayloadStrictWithDepth(buf []byte, u *LargeLitzPayload, depth int) error {
+	if u == nil {
+		return litz.ErrNilDestination
+	}
+	if depth > litz.DefaultMaxDepth {
+		return litz.ErrMaxDepthExceeded
+	}
+	fixedSize := int(unsafe.Sizeof(largeLitzPayloadLitzMirror{}))
+	if len(buf) < 8+fixedSize || len(buf)%8 != 0 {
+		return litz.ErrBufferTooShort
+	}
+	if uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {
+		return litz.ErrUnalignedBuffer
+	}
+	if *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {
+		return litz.ErrInvalidHeader
+	}
+	prev_Child := u.Child
+	*u = LargeLitzPayload{}
+	mirror := (*largeLitzPayloadLitzMirror)(unsafe.Pointer(&buf[8]))
+
+	if mirror.Name.offset > uintptr(len(buf)) || mirror.Name.length < 0 || mirror.Name.length > len(buf)-int(mirror.Name.offset) {
+		return litz.ErrStringOutOfBounds
+	}
+	var NumbersDummy int64
+	if mirror.Numbers.offset > uintptr(len(buf)) || mirror.Numbers.length < 0 {
+		return litz.ErrSliceOutOfBounds
+	}
+	if mirror.Numbers.length > 0 && mirror.Numbers.offset%uintptr(unsafe.Alignof(NumbersDummy)) != 0 {
+		return litz.ErrUnalignedBuffer
+	}
+	if mirror.Numbers.length > (len(buf)-int(mirror.Numbers.offset))/int(unsafe.Sizeof(NumbersDummy)) {
+		return litz.ErrSliceOutOfBounds
+	}
+	if mirror.Tags.offset > uintptr(len(buf)) || mirror.Tags.length < 0 {
+		return litz.ErrSliceOutOfBounds
+	}
+	if mirror.Tags.length > 0 && mirror.Tags.offset%8 != 0 {
+		return litz.ErrUnalignedBuffer
+	}
+	if mirror.Tags.length > (len(buf)-int(mirror.Tags.offset))/int(unsafe.Sizeof("")) {
+		return litz.ErrSliceOutOfBounds
+	}
+	if mirror.Child > uintptr(len(buf)) || (mirror.Child > 0 && mirror.Child < 8+unsafe.Sizeof(largeLitzPayloadLitzMirror{})) {
+		return litz.ErrPointerOutOfBounds
+	}
+	if mirror.Child > 0 && mirror.Child%8 != 0 {
+		return litz.ErrUnalignedBuffer
+	}
+	if mirror.Child > 0 && uintptr(len(buf))-mirror.Child < 8+unsafe.Sizeof(mediumLitzPayloadLitzMirror{}) {
+		return litz.ErrPointerOutOfBounds
+	}
+
+	u.ID = mirror.ID
+	u.Active = mirror.Active
+	if mirror.Name.length > 0 {
+		u.Name = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Name.offset)), mirror.Name.length)
+	} else {
+		u.Name = ""
+	}
+	if mirror.Numbers.length > 0 {
+		u.Numbers = unsafe.Slice((*int64)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Numbers.offset)), mirror.Numbers.length)
+	} else {
+		u.Numbers = nil
+	}
+	if mirror.Tags.length > 0 {
+		strHeaders := unsafe.Slice((*struct {
+			offset uintptr
+			length int
+		})(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.Tags.offset)), mirror.Tags.length)
+		// Validate every string header before creating any unsafe.String view.
+		for i := 0; i < len(strHeaders); i++ {
+			off := uint64(strHeaders[i].offset)
+			length := strHeaders[i].length
+			if length < 0 || off > uint64(len(buf)) || uint64(length) > uint64(len(buf))-off {
+				return litz.ErrStringOutOfBounds
+			}
+		}
+		slice := make([]string, len(strHeaders))
+		for i := 0; i < len(strHeaders); i++ {
+			if strHeaders[i].length > 0 {
+				slice[i] = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), strHeaders[i].offset)), strHeaders[i].length)
+			}
+		}
+		u.Tags = slice
+	} else {
+		u.Tags = nil
+	}
+	if mirror.Child > 0 {
+		u.Child = prev_Child
+		if u.Child == nil {
+			u.Child = new(MediumLitzPayload)
+		}
+		err := unmarshalMediumLitzPayloadStrictWithDepth(buf[mirror.Child:], u.Child, depth+1)
+		if err != nil {
+			return err
+		}
+	} else {
+		u.Child = nil
 	}
 
 	return nil

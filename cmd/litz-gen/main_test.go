@@ -54,11 +54,17 @@ func TestGenerator_ParseAndGenerate(t *testing.T) {
 	if !strings.Contains(codeStr, "func UnmarshalUserProfile(") {
 		t.Error("Generated code missing UnmarshalUserProfile function")
 	}
+	if !strings.Contains(codeStr, "func UnmarshalUserProfileStrict(") {
+		t.Error("Generated code missing UnmarshalUserProfileStrict function")
+	}
 	if !strings.Contains(codeStr, "func MarshalSingleKey(") {
 		t.Error("Generated code missing MarshalSingleKey function")
 	}
 	if !strings.Contains(codeStr, "func UnmarshalSingleKey(") {
 		t.Error("Generated code missing UnmarshalSingleKey function")
+	}
+	if !strings.Contains(codeStr, "func UnmarshalSingleKeyStrict(") {
+		t.Error("Generated code missing UnmarshalSingleKeyStrict function")
 	}
 
 	// Verify build tags are generated at the very top

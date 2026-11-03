@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.2.0"
+const Version = "v0.3.0"
 
 // HIBI Type Constants
 const (
@@ -34,6 +34,7 @@ const (
 var (
 	ErrBufferTooShort     = errors.New("litz.Unmarshal: buffer too short for fixed part")
 	ErrUnalignedBuffer    = errors.New("litz.Unmarshal: input buffer is not 8-byte aligned")
+	ErrNilDestination     = errors.New("litz.Unmarshal: destination is nil")
 	ErrStringOutOfBounds  = errors.New("litz.Unmarshal: string out of bounds")
 	ErrSliceOutOfBounds   = errors.New("litz.Unmarshal: slice out of bounds")
 	ErrPointerOutOfBounds = errors.New("litz.Unmarshal: nested pointer out of bounds")

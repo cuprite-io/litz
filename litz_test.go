@@ -536,7 +536,7 @@ func TestGroupCFixes(t *testing.T) {
 func TestSchemaEvolution_BackwardCompatibility(t *testing.T) {
 	// Simulate an older serialized payload of UserProfile that only contains Age and Score.
 	// 8-byte version header + 4-byte Age + 4-byte padding + 8-byte Score = 24 bytes.
-	buf := make([]byte, 24)
+	buf := litz.EnsureAligned(make([]byte, 24))
 
 	// Format signature and version
 	*(*[4]byte)(unsafe.Pointer(&buf[0])) = [4]byte{'L', 'T', 'Z', '0'}
@@ -1307,5 +1307,228 @@ func TestSliceSwizzleAlignmentSafety(t *testing.T) {
 	sUnaligned := litz.SliceSwizzle[uint64](aligned, 9, 4)
 	if sUnaligned != nil {
 		t.Fatalf("expected nil for unaligned uint64 offset")
+	}
+}
+
+func TestUnmarshalZeroesOutputStructAndPreventsStaleFields(t *testing.T) {
+	// 1. Simulate an older serialized payload that only contains Age and Score (24 bytes).
+	buf24 := litz.EnsureAligned(make([]byte, 24))
+	*(*[4]byte)(unsafe.Pointer(&buf24[0])) = [4]byte{'L', 'T', 'Z', '0'}
+	buf24[4] = 1
+	*(*uint32)(unsafe.Pointer(&buf24[8])) = 42
+	*(*float64)(unsafe.Pointer(&buf24[16])) = 3.14
+
+	// Reuse a struct with dirty/stale fields
+	output := UserProfile{
+		Age:    999,
+		Score:  888.8,
+		Name:   "STALE_OLD_NAME",
+		Active: true,
+	}
+
+	if err := UnmarshalUserProfile(buf24, &output); err != nil {
+		t.Fatalf("UnmarshalUserProfile failed: %v", err)
+	}
+	if output.Age != 42 {
+		t.Errorf("Expected Age=42, got %d", output.Age)
+	}
+	if output.Score != 3.14 {
+		t.Errorf("Expected Score=3.14, got %f", output.Score)
+	}
+	if output.Name != "" {
+		t.Errorf("Expected Name to be reset to empty, got %q", output.Name)
+	}
+	if output.Active != false {
+		t.Errorf("Expected Active to be reset to false, got %t", output.Active)
+	}
+
+	// 2. An even shorter 12-byte payload that only contains Age = 7
+	buf12 := litz.EnsureAligned(make([]byte, 12))
+	*(*[4]byte)(unsafe.Pointer(&buf12[0])) = [4]byte{'L', 'T', 'Z', '0'}
+	buf12[4] = 1
+	*(*uint32)(unsafe.Pointer(&buf12[8])) = 7
+
+	output = UserProfile{Age: 100, Score: 50.5, Name: "STALE", Active: true}
+	if err := UnmarshalUserProfile(buf12, &output); err != nil {
+		t.Fatalf("UnmarshalUserProfile(buf12) failed: %v", err)
+	}
+	if output.Age != 7 || output.Score != 0 || output.Name != "" || output.Active != false {
+		t.Errorf("Expected only Age=7 and all others reset to zero, got %+v", output)
+	}
+
+	// 3. Header-only payload (8 bytes) must reset everything to zero
+	buf8 := litz.EnsureAligned([]byte{'L', 'T', 'Z', '0', 1, 0, 0, 0})
+	output = UserProfile{Age: 100, Score: 50.5, Name: "STALE", Active: true}
+	if err := UnmarshalUserProfile(buf8, &output); err != nil {
+		t.Fatalf("UnmarshalUserProfile(buf8) failed: %v", err)
+	}
+	if output != (UserProfile{}) {
+		t.Errorf("Expected entire struct to be zeroed on header-only payload, got %+v", output)
+	}
+}
+
+func TestUnmarshalRejectsNilDestination(t *testing.T) {
+	buf := litz.EnsureAligned([]byte{'L', 'T', 'Z', '0', 1, 0, 0, 0})
+
+	if err := UnmarshalUserProfile(buf, nil); err != litz.ErrNilDestination {
+		t.Errorf("expected ErrNilDestination, got %v", err)
+	}
+	if err := UnmarshalUserProfileStrict(buf, nil); err != litz.ErrNilDestination {
+		t.Errorf("expected ErrNilDestination for strict, got %v", err)
+	}
+	if err := UnmarshalSingleKey(buf, nil); err != litz.ErrNilDestination {
+		t.Errorf("expected ErrNilDestination for SingleKey, got %v", err)
+	}
+	if err := UnmarshalSingleKeyStrict(buf, nil); err != litz.ErrNilDestination {
+		t.Errorf("expected ErrNilDestination for SingleKeyStrict, got %v", err)
+	}
+	if err := UnmarshalNestedPayload(buf, nil); err != litz.ErrNilDestination {
+		t.Errorf("expected ErrNilDestination for NestedPayload, got %v", err)
+	}
+	if err := UnmarshalNestedPayloadStrict(buf, nil); err != litz.ErrNilDestination {
+		t.Errorf("expected ErrNilDestination for NestedPayloadStrict, got %v", err)
+	}
+}
+
+func TestTableDrivenPayloadTruncation(t *testing.T) {
+	testCases := []struct {
+		name          string
+		marshalFull   func() ([]byte, error)
+		unmarshal     func([]byte) error
+		unmarshStrict func([]byte) error
+	}{
+		{
+			name: "UserProfile",
+			marshalFull: func() ([]byte, error) {
+				return MarshalUserProfile(&UserProfile{Age: 30, Score: 95.5, Name: "TableDrivenTest", Active: true}, nil)
+			},
+			unmarshal: func(b []byte) error {
+				var u UserProfile
+				return UnmarshalUserProfile(b, &u)
+			},
+			unmarshStrict: func(b []byte) error {
+				var u UserProfile
+				return UnmarshalUserProfileStrict(b, &u)
+			},
+		},
+		{
+			name: "SingleKey",
+			marshalFull: func() ([]byte, error) {
+				return MarshalSingleKey(&SingleKey{ID: 99999}, nil)
+			},
+			unmarshal: func(b []byte) error {
+				var u SingleKey
+				return UnmarshalSingleKey(b, &u)
+			},
+			unmarshStrict: func(b []byte) error {
+				var u SingleKey
+				return UnmarshalSingleKeyStrict(b, &u)
+			},
+		},
+		{
+			name: "NestedPayload",
+			marshalFull: func() ([]byte, error) {
+				return MarshalNestedPayload(&NestedPayload{
+					Profile:   &UserProfile{Age: 25, Name: "NestedUser"},
+					Tags:      []string{"tag1", "tag2"},
+					Numbers:   []int{1, 2, 3},
+					Signature: []byte("sign"),
+				}, nil)
+			},
+			unmarshal: func(b []byte) error {
+				var u NestedPayload
+				return UnmarshalNestedPayload(b, &u)
+			},
+			unmarshStrict: func(b []byte) error {
+				var u NestedPayload
+				return UnmarshalNestedPayloadStrict(b, &u)
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fullBuf, err := tc.marshalFull()
+			if err != nil {
+				t.Fatalf("marshalFull failed: %v", err)
+			}
+
+			// Cut the payload at every single byte from 0 to len-1
+			for i := 0; i < len(fullBuf); i++ {
+				sub := fullBuf[:i]
+
+				// Unmarshal (evolutionary) must never panic
+				errEvolution := tc.unmarshal(sub)
+				if i < 8 && errEvolution != litz.ErrBufferTooShort {
+					t.Fatalf("truncation at %d: expected ErrBufferTooShort, got %v", i, errEvolution)
+				}
+
+				// UnmarshalStrict must never panic AND must always reject truncated payload
+				errStrict := tc.unmarshStrict(sub)
+				if errStrict == nil {
+					t.Fatalf("truncation at %d: UnmarshalStrict expected error on truncated buffer, got nil", i)
+				}
+			}
+		})
+	}
+}
+
+func TestUnmarshalXStrictSuccessOnFullPayload(t *testing.T) {
+	input := &UserProfile{Age: 33, Score: 88.5, Name: "StrictModeUser", Active: true}
+	buf, err := MarshalUserProfile(input, nil)
+	if err != nil {
+		t.Fatalf("MarshalUserProfile failed: %v", err)
+	}
+
+	var output UserProfile
+	if err := UnmarshalUserProfileStrict(buf, &output); err != nil {
+		t.Fatalf("UnmarshalUserProfileStrict failed on full payload: %v", err)
+	}
+	if !reflect.DeepEqual(*input, output) {
+		t.Fatalf("StrictMode decoded mismatch:\nexpected: %+v\ngot: %+v", *input, output)
+	}
+
+	// SingleKey
+	skInput := &SingleKey{ID: 777}
+	skBuf, err := MarshalSingleKey(skInput, nil)
+	if err != nil {
+		t.Fatalf("MarshalSingleKey failed: %v", err)
+	}
+	var skOutput SingleKey
+	if err := UnmarshalSingleKeyStrict(skBuf, &skOutput); err != nil {
+		t.Fatalf("UnmarshalSingleKeyStrict failed: %v", err)
+	}
+	if skOutput.ID != 777 {
+		t.Fatalf("SingleKeyStrict mismatch: %d", skOutput.ID)
+	}
+}
+
+func TestNestedChildHeaderBoundsCheck(t *testing.T) {
+	// OuterMessage has SeqNum uint64, Body *NestedPayload
+	input := &OuterMessage{
+		SeqNum: 101,
+		Body: &NestedPayload{
+			Profile: &UserProfile{Age: 20, Name: "Child"},
+		},
+	}
+	buf, err := MarshalOuterMessage(input, nil)
+	if err != nil {
+		t.Fatalf("MarshalOuterMessage failed: %v", err)
+	}
+
+	// Find the child offset in mirror
+	mirror := (*outerMessageLitzMirror)(unsafe.Pointer(&buf[8]))
+	childOffset := mirror.Body
+	if childOffset == 0 {
+		t.Fatalf("expected non-zero child offset")
+	}
+
+	// Truncate buf so that child offset starts, but has fewer than 8 + sizeof(childMirror) bytes remaining.
+	// For example, childOffset + 8 (only child header without mirror)
+	truncated := buf[:childOffset+8]
+	var out OuterMessage
+	err = UnmarshalOuterMessage(truncated, &out)
+	if err != litz.ErrPointerOutOfBounds {
+		t.Fatalf("expected ErrPointerOutOfBounds for truncated child header, got: %v", err)
 	}
 }

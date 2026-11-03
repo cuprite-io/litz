@@ -623,10 +623,12 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		buf.WriteString("// WARNING: Unmarshaled strings and slices point directly into buf.\n")
 		buf.WriteString("// The input buf MUST outlive the returned structure u to prevent use-after-free corruption.\n")
 		fmt.Fprintf(&buf, "func Unmarshal%s(buf []byte, u *%s) error {\n", s.Name, s.Name)
+		fmt.Fprintf(&buf, "\tif u == nil {\n\t\treturn %sErrNilDestination\n\t}\n", prefix)
 		fmt.Fprintf(&buf, "\treturn unmarshal%sWithDepth(buf, u, 0)\n", s.Name)
 		buf.WriteString("}\n\n")
 
 		fmt.Fprintf(&buf, "func unmarshal%sWithDepth(buf []byte, u *%s, depth int) error {\n", s.Name, s.Name)
+		fmt.Fprintf(&buf, "\tif u == nil {\n\t\treturn %sErrNilDestination\n\t}\n", prefix)
 		fmt.Fprintf(&buf, "\tif depth > %sDefaultMaxDepth {\n", prefix)
 		fmt.Fprintf(&buf, "\t\treturn %sErrMaxDepthExceeded\n", prefix)
 		buf.WriteString("\t}\n")
@@ -639,6 +641,12 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 		fmt.Fprintf(&buf, "\tif *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {\n")
 		fmt.Fprintf(&buf, "\t\treturn %sErrInvalidHeader\n", prefix)
 		buf.WriteString("\t}\n")
+		for _, f := range s.Fields {
+			if f.Kind == TypeStructPtr {
+				fmt.Fprintf(&buf, "\tprev_%s := u.%s\n", f.Name, f.Name)
+			}
+		}
+		fmt.Fprintf(&buf, "\t*u = %s{}\n", s.Name)
 		buf.WriteString("\tif len(buf) == 8 {\n")
 		buf.WriteString("\t\treturn nil\n")
 		buf.WriteString("\t}\n")
@@ -696,13 +704,13 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 				buf.WriteString("\t\t}\n")
 			case TypeStructPtr:
 				// Secure nested bounds checks: check start offset AND full nested struct size
-				fmt.Fprintf(&buf, "\t\tif mirror.%s > uintptr(len(buf)) {\n", f.Name)
+				fmt.Fprintf(&buf, "\t\tif mirror.%s > uintptr(len(buf)) || (mirror.%s > 0 && mirror.%s < 8+unsafe.Sizeof(%s{})) {\n", f.Name, f.Name, f.Name, mirrorName)
 				fmt.Fprintf(&buf, "\t\t\treturn %sErrPointerOutOfBounds\n", prefix)
 				buf.WriteString("\t\t}\n")
 				fmt.Fprintf(&buf, "\t\tif mirror.%s > 0 && mirror.%s %% 8 != 0 {\n", f.Name, f.Name)
 				fmt.Fprintf(&buf, "\t\t\treturn %sErrUnalignedBuffer\n", prefix)
 				buf.WriteString("\t\t}\n")
-				fmt.Fprintf(&buf, "\t\tif mirror.%s > 0 && uintptr(len(buf))-mirror.%s < unsafe.Sizeof(%s{}) {\n", f.Name, f.Name, getMirrorName(f.BaseType))
+				fmt.Fprintf(&buf, "\t\tif mirror.%s > 0 && uintptr(len(buf))-mirror.%s < 8+unsafe.Sizeof(%s{}) {\n", f.Name, f.Name, getMirrorName(f.BaseType))
 				fmt.Fprintf(&buf, "\t\t\treturn %sErrPointerOutOfBounds\n", prefix)
 				buf.WriteString("\t\t}\n")
 			}
@@ -773,6 +781,7 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 				buf.WriteString("\t\t}\n")
 			case TypeStructPtr:
 				fmt.Fprintf(&buf, "\t\tif mirror.%s > 0 {\n", f.Name)
+				fmt.Fprintf(&buf, "\t\t\tu.%s = prev_%s\n", f.Name, f.Name)
 				fmt.Fprintf(&buf, "\t\t\tif u.%s == nil {\n", f.Name)
 				fmt.Fprintf(&buf, "\t\t\t\tu.%s = new(%s)\n", f.Name, f.BaseType)
 				buf.WriteString("\t\t\t}\n")
@@ -787,6 +796,166 @@ func generateCode(pkgName string, structs []StructInfo) ([]byte, error) {
 
 		// Generate Clone method for deep-copying (addresses issue #5: CloneAny deep copy escape hatch)
 		fmt.Fprintf(&buf, "\n\treturn nil\n}\n\n")
+
+		// 4. Generate UnmarshalStrict Method
+		fmt.Fprintf(&buf, "// Unmarshal%sStrict deserializes the buffer using SBC-IPR in strict mode.\n", s.Name)
+		buf.WriteString("// Unlike Unmarshal, it requires the full schema to be present and rejects truncated payloads.\n")
+		buf.WriteString("// The input buf MUST outlive the returned structure u to prevent use-after-free corruption.\n")
+		fmt.Fprintf(&buf, "func Unmarshal%sStrict(buf []byte, u *%s) error {\n", s.Name, s.Name)
+		fmt.Fprintf(&buf, "\tif u == nil {\n\t\treturn %sErrNilDestination\n\t}\n", prefix)
+		fmt.Fprintf(&buf, "\treturn unmarshal%sStrictWithDepth(buf, u, 0)\n", s.Name)
+		buf.WriteString("}\n\n")
+
+		fmt.Fprintf(&buf, "func unmarshal%sStrictWithDepth(buf []byte, u *%s, depth int) error {\n", s.Name, s.Name)
+		fmt.Fprintf(&buf, "\tif u == nil {\n\t\treturn %sErrNilDestination\n\t}\n", prefix)
+		fmt.Fprintf(&buf, "\tif depth > %sDefaultMaxDepth {\n", prefix)
+		fmt.Fprintf(&buf, "\t\treturn %sErrMaxDepthExceeded\n", prefix)
+		buf.WriteString("\t}\n")
+		fmt.Fprintf(&buf, "\tfixedSize := int(unsafe.Sizeof(%s{}))\n", mirrorName)
+		fmt.Fprintf(&buf, "\tif len(buf) < 8+fixedSize || len(buf) %% 8 != 0 {\n")
+		fmt.Fprintf(&buf, "\t\treturn %sErrBufferTooShort\n", prefix)
+		buf.WriteString("\t}\n")
+		buf.WriteString("\tif uintptr(unsafe.Pointer(&buf[0]))%8 != 0 {\n")
+		fmt.Fprintf(&buf, "\t\treturn %sErrUnalignedBuffer\n", prefix)
+		buf.WriteString("\t}\n")
+		fmt.Fprintf(&buf, "\tif *(*[4]byte)(unsafe.Pointer(&buf[0])) != [4]byte{'L', 'T', 'Z', '0'} || buf[4] != 1 {\n")
+		fmt.Fprintf(&buf, "\t\treturn %sErrInvalidHeader\n", prefix)
+		buf.WriteString("\t}\n")
+		for _, f := range s.Fields {
+			if f.Kind == TypeStructPtr {
+				fmt.Fprintf(&buf, "\tprev_%s := u.%s\n", f.Name, f.Name)
+			}
+		}
+		fmt.Fprintf(&buf, "\t*u = %s{}\n", s.Name)
+		fmt.Fprintf(&buf, "\tmirror := (*%s)(unsafe.Pointer(&buf[8]))\n\n", mirrorName)
+
+		// Bounds checking for variable fields in strict mode
+		for _, f := range s.Fields {
+			switch f.Kind {
+			case TypeString:
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 || mirror.%s.length > len(buf)-int(mirror.%s.offset) {\n", f.Name, f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrStringOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+			case TypeAny:
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 {\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrStringOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > 0 && mirror.%s.offset %% 8 != 0 {\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrUnalignedBuffer\n", prefix)
+				buf.WriteString("\t}\n")
+				fmt.Fprintf(&buf, "\tif int(mirror.%s.length) > len(buf)-int(mirror.%s.offset) {\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrStringOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+			case TypeBytes:
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 || mirror.%s.length > len(buf)-int(mirror.%s.offset) {\n", f.Name, f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrSliceOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+			case TypeSlicePrimitive:
+				fmt.Fprintf(&buf, "\tvar %sDummy %s\n", f.Name, f.BaseType)
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 {\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrSliceOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > 0 && mirror.%s.offset %% uintptr(unsafe.Alignof(%sDummy)) != 0 {\n", f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrUnalignedBuffer\n", prefix)
+				buf.WriteString("\t}\n")
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > (len(buf)-int(mirror.%s.offset))/int(unsafe.Sizeof(%sDummy)) {\n", f.Name, f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrSliceOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+			case TypeSliceString:
+				fmt.Fprintf(&buf, "\tif mirror.%s.offset > uintptr(len(buf)) || mirror.%s.length < 0 {\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrSliceOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > 0 && mirror.%s.offset %% 8 != 0 {\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrUnalignedBuffer\n", prefix)
+				buf.WriteString("\t}\n")
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > (len(buf)-int(mirror.%s.offset))/int(unsafe.Sizeof(\"\")) {\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrSliceOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+			case TypeStructPtr:
+				fmt.Fprintf(&buf, "\tif mirror.%s > uintptr(len(buf)) || (mirror.%s > 0 && mirror.%s < 8+unsafe.Sizeof(%s{})) {\n", f.Name, f.Name, f.Name, mirrorName)
+				fmt.Fprintf(&buf, "\t\treturn %sErrPointerOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+				fmt.Fprintf(&buf, "\tif mirror.%s > 0 && mirror.%s %% 8 != 0 {\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\treturn %sErrUnalignedBuffer\n", prefix)
+				buf.WriteString("\t}\n")
+				fmt.Fprintf(&buf, "\tif mirror.%s > 0 && uintptr(len(buf))-mirror.%s < 8+unsafe.Sizeof(%s{}) {\n", f.Name, f.Name, getMirrorName(f.BaseType))
+				fmt.Fprintf(&buf, "\t\treturn %sErrPointerOutOfBounds\n", prefix)
+				buf.WriteString("\t}\n")
+			}
+		}
+		buf.WriteString("\n")
+
+		// Assign Primitives directly in strict mode
+		for _, f := range s.Fields {
+			if f.Kind == TypePrimitive {
+				fmt.Fprintf(&buf, "\tu.%s = mirror.%s\n", f.Name, f.Name)
+			}
+		}
+
+		// Swizzle variable fields in strict mode
+		for _, f := range s.Fields {
+			switch f.Kind {
+			case TypePrimitive:
+				continue
+			case TypeString:
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > 0 {\n", f.Name)
+				fmt.Fprintf(&buf, "\t\tu.%s = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.%s.offset)), mirror.%s.length)\n", f.Name, f.Name, f.Name)
+				buf.WriteString("\t} else {\n")
+				fmt.Fprintf(&buf, "\t\tu.%s = \"\"\n", f.Name)
+				buf.WriteString("\t}\n")
+			case TypeBytes:
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > 0 {\n", f.Name)
+				fmt.Fprintf(&buf, "\t\tu.%s = unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.%s.offset)), mirror.%s.length)\n", f.Name, f.Name, f.Name)
+				buf.WriteString("\t} else {\n")
+				fmt.Fprintf(&buf, "\t\tu.%s = nil\n", f.Name)
+				buf.WriteString("\t}\n")
+			case TypeSlicePrimitive:
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > 0 {\n", f.Name)
+				fmt.Fprintf(&buf, "\t\tu.%s = unsafe.Slice((*%s)(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.%s.offset)), mirror.%s.length)\n", f.Name, f.BaseType, f.Name, f.Name)
+				buf.WriteString("\t} else {\n")
+				fmt.Fprintf(&buf, "\t\tu.%s = nil\n", f.Name)
+				buf.WriteString("\t}\n")
+			case TypeSliceString:
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > 0 {\n", f.Name)
+				fmt.Fprintf(&buf, "\t\tstrHeaders := unsafe.Slice((*struct{ offset uintptr; length int })(unsafe.Add(unsafe.Pointer(&buf[0]), mirror.%s.offset)), mirror.%s.length)\n", f.Name, f.Name)
+				buf.WriteString("\t\t// Validate every string header before creating any unsafe.String view.\n")
+				buf.WriteString("\t\tfor i := 0; i < len(strHeaders); i++ {\n")
+				buf.WriteString("\t\t\toff := uint64(strHeaders[i].offset)\n")
+				buf.WriteString("\t\t\tlength := strHeaders[i].length\n")
+				buf.WriteString("\t\t\tif length < 0 || off > uint64(len(buf)) || uint64(length) > uint64(len(buf))-off {\n")
+				fmt.Fprintf(&buf, "\t\t\t\treturn %sErrStringOutOfBounds\n", prefix)
+				buf.WriteString("\t\t\t}\n")
+				buf.WriteString("\t\t}\n")
+				fmt.Fprintf(&buf, "\t\tslice := make([]string, len(strHeaders))\n")
+				buf.WriteString("\t\tfor i := 0; i < len(strHeaders); i++ {\n")
+				buf.WriteString("\t\t\tif strHeaders[i].length > 0 {\n")
+				fmt.Fprintf(&buf, "\t\t\t\tslice[i] = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&buf[0]), strHeaders[i].offset)), strHeaders[i].length)\n")
+				buf.WriteString("\t\t\t}\n")
+				buf.WriteString("\t\t}\n")
+				fmt.Fprintf(&buf, "\t\tu.%s = slice\n", f.Name)
+				buf.WriteString("\t} else {\n")
+				fmt.Fprintf(&buf, "\t\tu.%s = nil\n", f.Name)
+				buf.WriteString("\t}\n")
+			case TypeAny:
+				fmt.Fprintf(&buf, "\tif mirror.%s.length > 0 {\n", f.Name)
+				fmt.Fprintf(&buf, "\t\tu.%s = %sNewDynamic(buf[mirror.%s.offset : mirror.%s.offset+uintptr(mirror.%s.length)], uint8(mirror.%s.valType))\n", f.Name, prefix, f.Name, f.Name, f.Name, f.Name)
+				buf.WriteString("\t} else {\n")
+				fmt.Fprintf(&buf, "\t\tu.%s = nil\n", f.Name)
+				buf.WriteString("\t}\n")
+			case TypeStructPtr:
+				fmt.Fprintf(&buf, "\tif mirror.%s > 0 {\n", f.Name)
+				fmt.Fprintf(&buf, "\t\tu.%s = prev_%s\n", f.Name, f.Name)
+				fmt.Fprintf(&buf, "\t\tif u.%s == nil {\n", f.Name)
+				fmt.Fprintf(&buf, "\t\t\tu.%s = new(%s)\n", f.Name, f.BaseType)
+				buf.WriteString("\t\t}\n")
+				fmt.Fprintf(&buf, "\t\terr := unmarshal%sStrictWithDepth(buf[mirror.%s:], u.%s, depth+1)\n", f.BaseType, f.Name, f.Name)
+				buf.WriteString("\t\tif err != nil { return err }\n")
+				buf.WriteString("\t} else {\n")
+				fmt.Fprintf(&buf, "\t\tu.%s = nil\n", f.Name)
+				buf.WriteString("\t}\n")
+			}
+		}
+		buf.WriteString("\n\treturn nil\n}\n\n")
 		fmt.Fprintf(&buf, "// Clone creates a deep-copy of %s, allocating fresh memory for all string and slice fields.\n", s.Name)
 		fmt.Fprintf(&buf, "func (u *%s) Clone() *%s {\n", s.Name, s.Name)
 		buf.WriteString("\treturn u.cloneWithDepth(0)\n")

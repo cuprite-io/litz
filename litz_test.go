@@ -3,6 +3,7 @@ package litz_test
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"reflect"
@@ -1651,4 +1652,180 @@ func TestGoldenPayloadWireFormat(t *testing.T) {
 	if !reflect.DeepEqual(*up, out) {
 		t.Fatalf("roundtrip mismatch:\nexpected: %+v\ngot:      %+v", *up, out)
 	}
+}
+
+func TestHIBI_4GiB_OverflowClamping(t *testing.T) {
+	t.Run("AlignedBufferBounds", func(t *testing.T) {
+		if buf := litz.AlignedBuffer(-1); buf != nil {
+			t.Errorf("AlignedBuffer(-1) expected nil, got len %d", len(buf))
+		}
+		if buf := litz.AlignedBuffer(0); buf != nil {
+			t.Errorf("AlignedBuffer(0) expected nil, got len %d", len(buf))
+		}
+		if buf := litz.AlignedBuffer(math.MaxInt); buf != nil {
+			t.Errorf("AlignedBuffer(math.MaxInt) expected nil, got len %d", len(buf))
+		}
+	})
+
+	t.Run("DynamicStringEmpty", func(t *testing.T) {
+		dNil := litz.NewDynamic(nil, litz.TypeString)
+		if s := dNil.String(); s != "" {
+			t.Errorf("dNil.String() expected empty, got %q", s)
+		}
+		dEmpty := litz.NewDynamic([]byte{}, litz.TypeString)
+		if s := dEmpty.String(); s != "" {
+			t.Errorf("dEmpty.String() expected empty, got %q", s)
+		}
+	})
+
+	t.Run("MapBoundsAndUnderflow", func(t *testing.T) {
+		validMap := map[string]any{
+			"alpha": "value_alpha",
+			"beta":  "value_beta",
+		}
+		buf, typ, err := litz.MarshalAny(validMap)
+		if err != nil {
+			t.Fatalf("MarshalAny failed: %v", err)
+		}
+		dyn := litz.NewDynamic(buf, typ)
+		if _, ok := dyn.GetView("alpha"); !ok {
+			t.Fatalf("GetView(alpha) failed on valid buffer")
+		}
+
+		// Corrupt entry 0 offset so valOffset < keyLen
+		corruptUnderflow := append([]byte(nil), buf...)
+		// Entry 0 offset is at bytes 4..20 (entryOffset = 4).
+		// valOffset is at entryOffset+4 = 8.
+		// Set valOffset = 1, while keyLen is 5 ("alpha").
+		*(*uint32)(unsafe.Pointer(&corruptUnderflow[8])) = 1
+		dynCorrupt := litz.NewDynamic(corruptUnderflow, typ)
+		if keys := dynCorrupt.Keys(); keys != nil {
+			t.Errorf("Keys() expected nil on offset underflow, got %v", keys)
+		}
+		if _, ok := dynCorrupt.GetView("alpha"); ok {
+			t.Errorf("GetView() expected false on offset underflow")
+		}
+
+		// Corrupt entry 0 so keyStart points into index table (e.g. valOffset = 5, keyLen = 5 -> keyStart = 0 < indexSize)
+		corruptIndexOverlap := append([]byte(nil), buf...)
+		*(*uint32)(unsafe.Pointer(&corruptIndexOverlap[8])) = 5
+		dynOverlap := litz.NewDynamic(corruptIndexOverlap, typ)
+		if keys := dynOverlap.Keys(); keys != nil {
+			t.Errorf("Keys() expected nil on index overlap, got %v", keys)
+		}
+		if _, ok := dynOverlap.GetView("alpha"); ok {
+			t.Errorf("GetView() expected false on index overlap")
+		}
+
+		// Corrupt entry 0 valLength so valEnd > len(buf)
+		corruptValEnd := append([]byte(nil), buf...)
+		// valLength is at entryOffset+8 = 12.
+		*(*uint32)(unsafe.Pointer(&corruptValEnd[12])) = 0x7FFFFFFF
+		dynValEnd := litz.NewDynamic(corruptValEnd, typ)
+		if _, ok := dynValEnd.GetView("alpha"); ok {
+			t.Errorf("GetView() expected false on valEnd > len(buf)")
+		}
+
+		// Corrupt entry 0 valOffset so valStart > valEnd (integer overflow in addition)
+		corruptWrap := append([]byte(nil), buf...)
+		*(*uint32)(unsafe.Pointer(&corruptWrap[8])) = 0xFFFFFFF0
+		*(*uint32)(unsafe.Pointer(&corruptWrap[12])) = 0x20
+		dynWrap := litz.NewDynamic(corruptWrap, typ)
+		if _, ok := dynWrap.GetView("alpha"); ok {
+			t.Errorf("GetView() expected false on valStart > valEnd wrap")
+		}
+	})
+
+	t.Run("MapCollisionCorruptedSibling", func(t *testing.T) {
+		fooHash := litz.HashKey("foo")
+		// Map layout: 2 entries with hash = fooHash
+		// Entry 0 (mid=0): "foo", valid
+		// Entry 1 (mid=1): corrupt sibling with valOffset < keyLen
+		buf := make([]byte, 60)
+		*(*uint32)(unsafe.Pointer(&buf[0])) = 2 // 2 entries
+
+		// Entry 0
+		*(*uint32)(unsafe.Pointer(&buf[4])) = fooHash // hash
+		*(*uint32)(unsafe.Pointer(&buf[8])) = 40      // valOffset
+		*(*uint32)(unsafe.Pointer(&buf[12])) = 4     // valLength
+		buf[16] = litz.TypeString                     // valType
+		buf[17] = 3                                   // keyLen: "foo"
+		copy(buf[37:40], "foo")
+		copy(buf[40:44], "val1")
+
+		// Entry 1 - Corrupt this sibling with valOffset < keyLen
+		*(*uint32)(unsafe.Pointer(&buf[20])) = fooHash // hash
+		*(*uint32)(unsafe.Pointer(&buf[24])) = 1       // valOffset < keyLen
+		*(*uint32)(unsafe.Pointer(&buf[28])) = 4       // valLength
+		buf[32] = litz.TypeString                      // valType
+		buf[33] = 3                                    // keyLen: "bar"
+
+		dyn := litz.NewDynamic(buf, litz.TypeMap)
+		view, ok := dyn.GetView("foo")
+		if !ok || view.String() != "val1" {
+			t.Errorf("GetView(foo) failed with corrupted collision sibling: got (%q, %t)", view.String(), ok)
+		}
+
+		// Now test when mid lands on corrupt entry 0 and valid entry 1 has "foo"
+		buf2 := make([]byte, 60)
+		*(*uint32)(unsafe.Pointer(&buf2[0])) = 2 // 2 entries
+		// Entry 0 (mid=0) is corrupt
+		*(*uint32)(unsafe.Pointer(&buf2[4])) = fooHash
+		*(*uint32)(unsafe.Pointer(&buf2[8])) = 1 // valOffset < keyLen
+		*(*uint32)(unsafe.Pointer(&buf2[12])) = 4
+		buf2[16] = litz.TypeString
+		buf2[17] = 3
+		// Entry 1 is valid "foo"
+		*(*uint32)(unsafe.Pointer(&buf2[20])) = fooHash
+		*(*uint32)(unsafe.Pointer(&buf2[24])) = 40
+		*(*uint32)(unsafe.Pointer(&buf2[28])) = 4
+		buf2[32] = litz.TypeString
+		buf2[33] = 3
+		copy(buf2[37:40], "foo")
+		copy(buf2[40:44], "val2")
+
+		dyn2 := litz.NewDynamic(buf2, litz.TypeMap)
+		view2, ok2 := dyn2.GetView("foo")
+		if !ok2 || view2.String() != "val2" {
+			t.Errorf("GetView(foo) failed when mid is corrupted sibling: got (%q, %t)", view2.String(), ok2)
+		}
+	})
+
+	t.Run("SliceBoundsAndUnderflow", func(t *testing.T) {
+		validSlice := []any{"elem1", "elem2"}
+		buf, typ, err := litz.MarshalAny(validSlice)
+		if err != nil {
+			t.Fatalf("MarshalAny failed: %v", err)
+		}
+		dyn := litz.NewDynamic(buf, typ)
+		slice := dyn.Slice()
+		if len(slice) != 2 {
+			t.Fatalf("Slice() expected len 2, got %d", len(slice))
+		}
+
+		// Corrupt entry 0 offset so valStart points into index table (< indexSize = 8 + 2*8 = 24)
+		corruptUnderflow := append([]byte(nil), buf...)
+		*(*uint32)(unsafe.Pointer(&corruptUnderflow[8])) = 10
+		dynUnderflow := litz.NewDynamic(corruptUnderflow, typ)
+		if res := dynUnderflow.Slice(); res != nil {
+			t.Errorf("Slice() expected nil on index overlap, got %v", res)
+		}
+
+		// Corrupt entry 0 length so valEnd > len(buf)
+		corruptEnd := append([]byte(nil), buf...)
+		*(*uint32)(unsafe.Pointer(&corruptEnd[12])) = 0x7FFFFFFF
+		dynEnd := litz.NewDynamic(corruptEnd, typ)
+		if res := dynEnd.Slice(); res != nil {
+			t.Errorf("Slice() expected nil on valEnd > len(buf), got %v", res)
+		}
+
+		// Corrupt entry 0 offset and length so valStart > valEnd
+		corruptWrap := append([]byte(nil), buf...)
+		*(*uint32)(unsafe.Pointer(&corruptWrap[8])) = 0xFFFFFFF0
+		*(*uint32)(unsafe.Pointer(&corruptWrap[12])) = 0x20
+		dynWrap := litz.NewDynamic(corruptWrap, typ)
+		if res := dynWrap.Slice(); res != nil {
+			t.Errorf("Slice() expected nil on valStart > valEnd, got %v", res)
+		}
+	})
 }

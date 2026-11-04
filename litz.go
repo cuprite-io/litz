@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.3.1"
+const Version = "v0.3.2"
 
 // HIBI Type Constants
 const (
@@ -53,7 +53,7 @@ const DefaultMaxDepth = 64
 // AlignedBuffer allocates a byte slice. Go's runtime allocator aligns heap
 // allocations to 8-byte boundaries automatically for sizes >= 8 bytes.
 func AlignedBuffer(size int) []byte {
-	if size <= 0 {
+	if size <= 0 || uint64(size)+7 > uint64(math.MaxInt) {
 		return nil
 	}
 	u64Slice := make([]uint64, (size+7)/8)
@@ -201,6 +201,7 @@ func (d *Dynamic) Keys() []string {
 	if numEntries > maxEntries {
 		return nil
 	}
+	indexSize := 4 + numEntries*16
 	keys := make([]string, numEntries)
 	for i := 0; i < numEntries; i++ {
 		entryOffset := 4 + i*16
@@ -210,8 +211,11 @@ func (d *Dynamic) Keys() []string {
 		entryPtr := unsafe.Pointer(&d.buf[entryOffset])
 		valOffset := *(*uint32)(unsafe.Add(entryPtr, 4))
 		keyLen := *(*uint8)(unsafe.Add(entryPtr, 13))
-		keyStart := int(valOffset) - int(keyLen)
-		if keyStart < 4 || int(valOffset) > len(d.buf) {
+		if valOffset < uint32(keyLen) {
+			return nil
+		}
+		keyStart := int(valOffset - uint32(keyLen))
+		if keyStart < indexSize || int(valOffset) > len(d.buf) {
 			return nil
 		}
 		keys[i] = unsafe.String((*byte)(unsafe.Pointer(&d.buf[keyStart])), int(keyLen))
@@ -257,6 +261,7 @@ func (d *Dynamic) getView(key string) (Dynamic, bool) {
 	if int(numEntries) > maxEntries {
 		return Dynamic{}, false
 	}
+	indexSize := 4 + int(numEntries)*16
 	hash := HashKey(key)
 
 	// Binary search on the index table which starts at offset 4.
@@ -279,24 +284,20 @@ func (d *Dynamic) getView(key string) (Dynamic, bool) {
 			valType := *(*uint8)(unsafe.Add(entryPtr, 12))
 			keyLen := *(*uint8)(unsafe.Add(entryPtr, 13))
 
-			// Key is stored immediately before the value: starting at valOffset - keyLen
-			keyStart := int(valOffset) - int(keyLen)
-			if keyStart < 4 || int(valOffset) > len(d.buf) {
-				return Dynamic{}, false
-			}
-
-			// Verify if key matches (Hash collision verification)
-			entryKey := unsafe.String((*byte)(unsafe.Pointer(&d.buf[keyStart])), int(keyLen))
-			if entryKey == key {
+			if valOffset >= uint32(keyLen) {
+				keyStart := int(valOffset - uint32(keyLen))
 				valStart := int(valOffset)
 				valEnd := valStart + int(valLength)
-				if valEnd > len(d.buf) {
-					return Dynamic{}, false
+				if keyStart >= indexSize && valEnd <= len(d.buf) && valStart <= valEnd {
+					// Verify if key matches (Hash collision verification)
+					entryKey := unsafe.String((*byte)(unsafe.Pointer(&d.buf[keyStart])), int(keyLen))
+					if entryKey == key {
+						return Dynamic{
+							buf:     d.buf[valStart:valEnd],
+							valType: valType,
+						}, true
+					}
 				}
-				return Dynamic{
-					buf:     d.buf[valStart:valEnd],
-					valType: valType,
-				}, true
 			}
 
 			// In case of a hash collision, keys with duplicate hashes are sorted adjacent
@@ -311,13 +312,17 @@ func (d *Dynamic) getView(key string) (Dynamic, bool) {
 				lValLength := *(*uint32)(unsafe.Add(lPtr, 8))
 				lValType := *(*uint8)(unsafe.Add(lPtr, 12))
 				lKeyLen := *(*uint8)(unsafe.Add(lPtr, 13))
-				lKeyStart := int(lValOffset) - int(lKeyLen)
-				lValEnd := int(lValOffset) + int(lValLength)
-				if lKeyStart >= 4 && lValEnd <= len(d.buf) && int(lValOffset) <= lValEnd {
+				if lValOffset < uint32(lKeyLen) {
+					continue
+				}
+				lKeyStart := int(lValOffset - uint32(lKeyLen))
+				lValStart := int(lValOffset)
+				lValEnd := lValStart + int(lValLength)
+				if lKeyStart >= indexSize && lValEnd <= len(d.buf) && lValStart <= lValEnd {
 					lKey := unsafe.String((*byte)(unsafe.Pointer(&d.buf[lKeyStart])), int(lKeyLen))
 					if lKey == key {
 						return Dynamic{
-							buf:     d.buf[int(lValOffset):lValEnd],
+							buf:     d.buf[lValStart:lValEnd],
 							valType: lValType,
 						}, true
 					}
@@ -337,13 +342,17 @@ func (d *Dynamic) getView(key string) (Dynamic, bool) {
 				rValLength := *(*uint32)(unsafe.Add(rPtr, 8))
 				rValType := *(*uint8)(unsafe.Add(rPtr, 12))
 				rKeyLen := *(*uint8)(unsafe.Add(rPtr, 13))
-				rKeyStart := int(rValOffset) - int(rKeyLen)
-				rValEnd := int(rValOffset) + int(rValLength)
-				if rKeyStart >= 4 && rValEnd <= len(d.buf) && int(rValOffset) <= rValEnd {
+				if rValOffset < uint32(rKeyLen) {
+					continue
+				}
+				rKeyStart := int(rValOffset - uint32(rKeyLen))
+				rValStart := int(rValOffset)
+				rValEnd := rValStart + int(rValLength)
+				if rKeyStart >= indexSize && rValEnd <= len(d.buf) && rValStart <= rValEnd {
 					rKey := unsafe.String((*byte)(unsafe.Pointer(&d.buf[rKeyStart])), int(rKeyLen))
 					if rKey == key {
 						return Dynamic{
-							buf:     d.buf[int(rValOffset):rValEnd],
+							buf:     d.buf[rValStart:rValEnd],
 							valType: rValType,
 						}, true
 					}
@@ -393,7 +402,7 @@ func (d *Dynamic) Bool() bool {
 
 // String returns the value as a string (zero-copy pointer casting).
 func (d *Dynamic) String() string {
-	if d.IsNil() || d.valType != TypeString {
+	if d.IsNil() || d.valType != TypeString || len(d.buf) == 0 {
 		return ""
 	}
 	return unsafe.String(&d.buf[0], len(d.buf))
@@ -439,6 +448,7 @@ func (d *Dynamic) Slice() []*Dynamic {
 	}
 	// Read the element type from offset 4 (as written by marshalSlice)
 	eltType := d.buf[4]
+	indexSize := 8 + int(numElements)*8
 
 	slice := make([]*Dynamic, numElements)
 	for i := 0; i < int(numElements); i++ {
@@ -452,7 +462,7 @@ func (d *Dynamic) Slice() []*Dynamic {
 
 		valStart := int(offset)
 		valEnd := valStart + int(length)
-		if valEnd > len(d.buf) || valStart > valEnd {
+		if valEnd > len(d.buf) || valStart > valEnd || valStart < indexSize {
 			return nil
 		}
 		slice[i] = &Dynamic{buf: d.buf[valStart:valEnd], valType: eltType}
@@ -584,10 +594,16 @@ func marshalAnyWithDepth(v any, depth int) ([]byte, uint8, error) {
 		}
 		return buf, TypeBool, nil
 	case string:
+		if uint64(len(val)) > math.MaxUint32 {
+			return nil, TypeNull, ErrSizeOverflow
+		}
 		buf := AlignedBuffer(len(val))
 		copy(buf, val)
 		return buf, TypeString, nil
 	case []byte:
+		if uint64(len(val)) > math.MaxUint32 {
+			return nil, TypeNull, ErrSizeOverflow
+		}
 		buf := AlignedBuffer(len(val))
 		copy(buf, val)
 		return buf, TypeBytes, nil
@@ -646,6 +662,9 @@ func marshalMap(m map[string]any, depth int) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if uint64(len(valBytes)) > math.MaxUint32 {
+			return nil, ErrSizeOverflow
+		}
 		elements = append(elements, hibiKeyValue{
 			hash:    HashKey(k),
 			key:     k,
@@ -659,19 +678,23 @@ func marshalMap(m map[string]any, depth int) ([]byte, error) {
 		return elements[i].hash < elements[j].hash
 	})
 
-	if numEntries > (math.MaxInt-4)/16 {
-		return nil, errors.New("litz.marshalMap: map size overflows maximum elements")
+	if uint64(numEntries) > (math.MaxUint32-4)/16 {
+		return nil, ErrSizeOverflow
 	}
 	indexSize := 4 + numEntries*16
-	payloadSize := 0
+	var payloadSize uint64
 	for _, el := range elements {
-		payloadSize += len(el.key) + len(el.bytes)
+		payloadSize += uint64(len(el.key)) + uint64(len(el.bytes))
+		if payloadSize > math.MaxUint32 {
+			return nil, ErrSizeOverflow
+		}
 	}
 
-	totalSize := indexSize + payloadSize
-	if totalSize < 0 || totalSize < indexSize || totalSize < payloadSize {
-		return nil, errors.New("litz.marshalMap: map size overflows int")
+	totalSize64 := uint64(indexSize) + payloadSize
+	if totalSize64 > math.MaxUint32 || totalSize64 > uint64(math.MaxInt) {
+		return nil, ErrSizeOverflow
 	}
+	totalSize := int(totalSize64)
 	buf := AlignedBuffer(totalSize)
 
 	// Write number of entries
@@ -684,6 +707,10 @@ func marshalMap(m map[string]any, depth int) ([]byte, error) {
 
 		keyLen := uint32(len(el.key))
 		valLen := uint32(len(el.bytes))
+
+		if uint64(currentOffset)+uint64(keyLen)+uint64(valLen) > math.MaxUint32 {
+			return nil, ErrSizeOverflow
+		}
 
 		// Write Hash
 		*(*uint32)(entryPtr) = el.hash
@@ -716,8 +743,8 @@ func marshalSlice(rv reflect.Value, depth int) ([]byte, error) {
 	}
 
 	// Prevent Integer Overflow
-	if numElements > (math.MaxInt32-8)/8 {
-		return nil, errors.New("litz.marshalSlice: slice length overflows maximum elements")
+	if uint64(numElements) > (math.MaxUint32-8)/8 {
+		return nil, ErrSizeOverflow
 	}
 
 	// Dynamic slice serialization:
@@ -727,7 +754,7 @@ func marshalSlice(rv reflect.Value, depth int) ([]byte, error) {
 	indexSize := 8 + numElements*8
 	payloads := make([][]byte, numElements)
 	var eltType uint8 = TypeNull
-	totalPayloadSize := 0
+	var totalPayloadSize uint64
 	for i := 0; i < numElements; i++ {
 		b, t, err := marshalAnyWithDepth(rv.Index(i).Interface(), depth+1)
 		if err != nil {
@@ -738,14 +765,21 @@ func marshalSlice(rv reflect.Value, depth int) ([]byte, error) {
 		} else if t != eltType {
 			return nil, fmt.Errorf("litz.marshalSlice: heterogeneous slice element type %d does not match first element type %d", t, eltType)
 		}
+		if uint64(len(b)) > math.MaxUint32 {
+			return nil, ErrSizeOverflow
+		}
 		payloads[i] = b
-		totalPayloadSize += len(b)
+		totalPayloadSize += uint64(len(b))
+		if totalPayloadSize > math.MaxUint32 {
+			return nil, ErrSizeOverflow
+		}
 	}
 
-	totalSize := indexSize + totalPayloadSize
-	if totalSize < 0 || totalSize < indexSize || totalSize < totalPayloadSize {
-		return nil, errors.New("litz.marshalSlice: slice size overflows int")
+	totalSize64 := uint64(indexSize) + totalPayloadSize
+	if totalSize64 > math.MaxUint32 || totalSize64 > uint64(math.MaxInt) {
+		return nil, ErrSizeOverflow
 	}
+	totalSize := int(totalSize64)
 	buf := AlignedBuffer(totalSize)
 
 	// Write element count
@@ -759,11 +793,16 @@ func marshalSlice(rv reflect.Value, depth int) ([]byte, error) {
 		entryOffset := 8 + i*8
 		entryPtr := unsafe.Pointer(&buf[entryOffset])
 
-		*(*uint32)(entryPtr) = currentOffset
-		*(*uint32)(unsafe.Add(entryPtr, 4)) = uint32(len(p))
+		pLen := uint32(len(p))
+		if uint64(currentOffset)+uint64(pLen) > math.MaxUint32 {
+			return nil, ErrSizeOverflow
+		}
 
-		copy(buf[currentOffset:currentOffset+uint32(len(p))], p)
-		currentOffset += uint32(len(p))
+		*(*uint32)(entryPtr) = currentOffset
+		*(*uint32)(unsafe.Add(entryPtr, 4)) = pLen
+
+		copy(buf[currentOffset:currentOffset+pLen], p)
+		currentOffset += pLen
 	}
 
 	return buf, nil

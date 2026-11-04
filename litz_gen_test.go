@@ -468,6 +468,9 @@ func marshalNestedPayloadWithDepth(u *NestedPayload, buf []byte, depth int) ([]b
 		return nil, err
 	}
 	MetadataLen := len(MetadataBytes)
+	if uint64(MetadataLen) > 0xFFFFFFFF {
+		return nil, litz.ErrSizeOverflow
+	}
 	if MetadataLen > 0 {
 		if totalSize+7 < totalSize {
 			return nil, litz.ErrSizeOverflow

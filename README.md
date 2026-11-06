@@ -124,8 +124,12 @@ func main() {
 
 	fmt.Printf("Deserialized User: %s (ID: %d)\n", output.Name, output.ID)
 
-	// 3. Optional: Dynamic lookup of fields without full unmarshaling
-	dyn := litz.NewDynamic(buf, litz.TypeMap)
+	// 3. Optional: Dynamic lookup of key-value payloads without unmarshaling all fields
+	dynBuf, typ, err := litz.MarshalAny(map[string]any{"Active": true, "Role": "Admin"})
+	if err != nil {
+		log.Fatalf("failed to marshal map: %v", err)
+	}
+	dyn := litz.NewDynamic(dynBuf, typ)
 	if activeVal, ok := dyn.GetView("Active"); ok {
 		fmt.Printf("Dynamic Active check: %t\n", activeVal.Bool())
 	}

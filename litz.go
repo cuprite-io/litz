@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.3.2"
+const Version = "v0.3.3"
 
 // HIBI Type Constants
 const (
@@ -215,10 +215,10 @@ func (d *Dynamic) Keys() []string {
 			return nil
 		}
 		keyStart := int(valOffset - uint32(keyLen))
-		if keyStart < indexSize || int(valOffset) > len(d.buf) {
+		if keyStart < indexSize || keyStart >= len(d.buf) || int(valOffset) > len(d.buf) {
 			return nil
 		}
-		keys[i] = unsafe.String((*byte)(unsafe.Pointer(&d.buf[keyStart])), int(keyLen))
+		keys[i] = unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&d.buf[0]), keyStart)), int(keyLen))
 	}
 	return keys
 }
@@ -288,9 +288,9 @@ func (d *Dynamic) getView(key string) (Dynamic, bool) {
 				keyStart := int(valOffset - uint32(keyLen))
 				valStart := int(valOffset)
 				valEnd := valStart + int(valLength)
-				if keyStart >= indexSize && valEnd <= len(d.buf) && valStart <= valEnd {
+				if keyStart >= indexSize && keyStart < len(d.buf) && valEnd <= len(d.buf) && valStart <= valEnd {
 					// Verify if key matches (Hash collision verification)
-					entryKey := unsafe.String((*byte)(unsafe.Pointer(&d.buf[keyStart])), int(keyLen))
+					entryKey := unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&d.buf[0]), keyStart)), int(keyLen))
 					if entryKey == key {
 						return Dynamic{
 							buf:     d.buf[valStart:valEnd],
@@ -318,8 +318,8 @@ func (d *Dynamic) getView(key string) (Dynamic, bool) {
 				lKeyStart := int(lValOffset - uint32(lKeyLen))
 				lValStart := int(lValOffset)
 				lValEnd := lValStart + int(lValLength)
-				if lKeyStart >= indexSize && lValEnd <= len(d.buf) && lValStart <= lValEnd {
-					lKey := unsafe.String((*byte)(unsafe.Pointer(&d.buf[lKeyStart])), int(lKeyLen))
+				if lKeyStart >= indexSize && lKeyStart < len(d.buf) && lValEnd <= len(d.buf) && lValStart <= lValEnd {
+					lKey := unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&d.buf[0]), lKeyStart)), int(lKeyLen))
 					if lKey == key {
 						return Dynamic{
 							buf:     d.buf[lValStart:lValEnd],
@@ -348,8 +348,8 @@ func (d *Dynamic) getView(key string) (Dynamic, bool) {
 				rKeyStart := int(rValOffset - uint32(rKeyLen))
 				rValStart := int(rValOffset)
 				rValEnd := rValStart + int(rValLength)
-				if rKeyStart >= indexSize && rValEnd <= len(d.buf) && rValStart <= rValEnd {
-					rKey := unsafe.String((*byte)(unsafe.Pointer(&d.buf[rKeyStart])), int(rKeyLen))
+				if rKeyStart >= indexSize && rKeyStart < len(d.buf) && rValEnd <= len(d.buf) && rValStart <= rValEnd {
+					rKey := unsafe.String((*byte)(unsafe.Add(unsafe.Pointer(&d.buf[0]), rKeyStart)), int(rKeyLen))
 					if rKey == key {
 						return Dynamic{
 							buf:     d.buf[rValStart:rValEnd],

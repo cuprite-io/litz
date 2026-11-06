@@ -22,6 +22,9 @@ We follow coordinated disclosure and will work with you to patch the issue priva
 ## Built-in Security Features
 
 Litz is designed to safely handle untrusted binary payloads directly in low-latency hot-paths:
-- **Memory Safety & Alignment Protection**: Enforces 8-byte pointer alignment checks on buffer reuse, protecting against `SIGBUS` faults on strict alignment architectures.
-- **Overflow-Safe Bounds Checks**: Utilizes multiplication-free, overflow-immune bounds checking in generated unmarshalers to prevent remote code execution or arbitrary memory reads via corrupt payloads.
-- **Cardinality & Alloc Limits**: Dynamic array and map unmarshalers validate key length and array slice bounds against physical buffer capacities, neutralizing Denial of Service (DoS) OOM vectors.
+- **Memory Safety & Alignment Protection**: Enforces 8-byte pointer alignment checks (`EnsureAligned`, `ErrUnalignedBuffer`) and guarantees 8-byte boundary alignment and zeroed padding between variable-length segments, eliminating `SIGBUS` faults on strict alignment architectures.
+- **Overflow-Safe Bounds Checks**: Utilizes multiplication-free, overflow-immune bounds checking in generated unmarshalers and HIBI dynamic lookups. Payloads and element offsets are clamped to 4 GiB (`math.MaxUint32`), returning `ErrSizeOverflow` to prevent silent 32-bit offset wrapping on 64-bit platforms.
+- **Recursion & Call-Stack Protection**: Recursive pointer hierarchies, maps, slices, and `CloneAny` traversals strictly enforce depth checks (`DefaultMaxDepth = 64`, `ErrMaxDepthExceeded`), neutralizing stack-exhaustion DoS vectors.
+- **Strict AST Type Environment**: Compile-time code generator validates struct AST models, rejecting unsafe pointer-bearing types, embedded fields, maps, or unbounded interfaces to maintain wire format safety.
+- **Deterministic Field Defaults & Strict Unmarshaling**: Unmarshalers deterministically reset destination structs on decode, and strict unmarshalers (`Unmarshal*Strict`) guarantee zero-tolerance validation of payload extents without silent field truncation.
+- **Target Architecture Quarantine**: SBC-IPR requires 64-bit word size and little-endian register ordering (`amd64`, `arm64`, `riscv64`, `ppc64le`, `loong64`, `mips64le`). 32-bit and big-endian architectures are safely rejected at compile time via Go build constraints.

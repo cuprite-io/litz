@@ -1045,6 +1045,83 @@ func FuzzUnmarshalSingleKey(f *testing.F) {
 	})
 }
 
+func FuzzUnmarshalOuterMessage(f *testing.F) {
+	input := &OuterMessage{
+		SeqNum: 42,
+		Body: &NestedPayload{
+			Profile: &UserProfile{Age: 25, Name: "FuzzUser"},
+			Tags:    []string{"tag1", "tag2"},
+		},
+	}
+	buf, err := MarshalOuterMessage(input, nil)
+	if err == nil {
+		f.Add(buf)
+	}
+	f.Add([]byte{'L', 'T', 'Z', '0', 1, 0, 0, 0})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var output OuterMessage
+		_ = UnmarshalOuterMessage(data, &output)
+		_ = UnmarshalOuterMessageStrict(data, &output)
+	})
+}
+
+func FuzzUnmarshalRecursiveNode(f *testing.F) {
+	input := &RecursiveNode{
+		Val: 1,
+		Next: &RecursiveNode{
+			Val: 2,
+			Next: &RecursiveNode{
+				Val: 3,
+			},
+		},
+	}
+	buf, err := MarshalRecursiveNode(input, nil)
+	if err == nil {
+		f.Add(buf)
+	}
+	f.Add([]byte{'L', 'T', 'Z', '0', 1, 0, 0, 0})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var output RecursiveNode
+		_ = UnmarshalRecursiveNode(data, &output)
+		_ = UnmarshalRecursiveNodeStrict(data, &output)
+	})
+}
+
+func FuzzDynamic(f *testing.F) {
+	mapBuf, mapType, err := litz.MarshalAny(map[string]any{"key1": "val1", "num": int64(42)})
+	if err == nil {
+		f.Add(mapBuf, uint8(mapType))
+	}
+	sliceBuf, sliceType, err := litz.MarshalAny([]any{"item1", "item2"})
+	if err == nil {
+		f.Add(sliceBuf, uint8(sliceType))
+	}
+	f.Add([]byte{}, uint8(litz.TypeNull))
+	f.Add([]byte{1, 2, 3, 4, 5, 6, 7, 8}, uint8(litz.TypeMap))
+	f.Add([]byte{1, 2, 3, 4, 5, 6, 7, 8}, uint8(litz.TypeSlice))
+
+	f.Fuzz(func(t *testing.T, data []byte, valType uint8) {
+		dyn := litz.NewDynamic(data, valType)
+		_ = dyn.Len()
+		_ = dyn.Keys()
+		_ = dyn.Get("key1")
+		_, _ = dyn.GetView("key1")
+		_, _ = dyn.GetOK("key1")
+		_ = dyn.Slice()
+		_ = dyn.Int()
+		_ = dyn.Uint()
+		_ = dyn.Float()
+		_ = dyn.Bool()
+		_ = dyn.String()
+		_ = dyn.Bytes()
+		_, _ = dyn.ToMap()
+		_, _ = dyn.ToSlice()
+		_ = litz.CloneAny(dyn)
+	})
+}
+
 func TestUnmarshalRejectsUnalignedBuffer(t *testing.T) {
 	t.Run("UserProfile", func(t *testing.T) {
 		input := &UserProfile{Age: 30, Score: 99.5, Name: "Alice", Active: true}

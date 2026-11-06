@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Verify Module Dependencies
+        run: go mod verify
+
+      - name: Verify Generator Reproducibility
+        run: |
+          go run ./cmd/litz-gen -dir . -out litz_gen_test.go
+          go run ./cmd/litz-gen -dir ./benchmark -out bench_litz_gen.go
+          git diff --exit-code
+
+      - name: Run Static Analysis (go vet)
+        run: go vet ./...
+
+      - name: Run Unit Tests with Race Detector
+        run: go test -v -race -count=1 ./...
+
+      - name: Run Pointer Safety (checkptr=2)
+        run: go test -v -gcflags=all=-d=checkptr=2 -count=1 ./...
+
+      - name: Cross-Architecture Compilation (Supported 64-Bit Little-Endian)
+        run: |
+          GOARCH=arm64 go build ./...
+          GOARCH=riscv64 go build ./...
+          GOARCH=ppc64le go build ./...
+          GOARCH=loong64 go build ./...
+          GOARCH=mips64le go build ./...
+
+      - name: Verify Rejection of Unsupported Architectures
+        run: |
+          ! GOARCH=386 go build github.com/cuprite-io/litz
+          ! GOARCH=arm go build github.com/cuprite-io/litz
+          ! GOARCH=s390x go build github.com/cuprite-io/litz
+          ! GOARCH=mips go build github.com/cuprite-io/litz
+
+      - name: Run Benchmark Smoke Test
+        run: |
+          go test -v ./benchmark -run=TestMarshalBenchmarkPayloadsZeroLengthBuffer
+          go test ./benchmark -run='^$' -bench='BenchmarkMarshalLitz_Small' -benchtime=100ms
+
+      - name: Run Fuzz Smoke Tests
+        run: |
+          go test -fuzz=FuzzUnmarshalUserProfile -fuzztime=3s
+          go test -fuzz=FuzzUnmarshalNestedPayload -fuzztime=3s
+          go test -fuzz=FuzzUnmarshalSingleKey -fuzztime=3s
+          go test -fuzz=FuzzUnmarshalOuterMessage -fuzztime=3s
+          go test -fuzz=FuzzUnmarshalRecursiveNode -fuzztime=3s
+          go test -fuzz=FuzzDynamic -fuzztime=3s

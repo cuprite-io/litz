@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -104,9 +105,23 @@ func buildTypeEnv(pkgs map[string]*ast.Package) TypeEnv {
 		env.primitives[k] = v
 	}
 
+	var pkgNames []string
+	for name := range pkgs {
+		pkgNames = append(pkgNames, name)
+	}
+	sort.Strings(pkgNames)
+
 	rawAliases := make(map[string]string)
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
+	for _, pName := range pkgNames {
+		pkg := pkgs[pName]
+		var fileNames []string
+		for fname := range pkg.Files {
+			fileNames = append(fileNames, fname)
+		}
+		sort.Strings(fileNames)
+
+		for _, fname := range fileNames {
+			file := pkg.Files[fname]
 			for _, decl := range file.Decls {
 				genDecl, ok := decl.(*ast.GenDecl)
 				if !ok || genDecl.Tok != token.TYPE {
@@ -129,11 +144,18 @@ func buildTypeEnv(pkgs map[string]*ast.Package) TypeEnv {
 		}
 	}
 
-	// Resolve alias chains (e.g. type MyID uint64, type AdminID MyID)
+	// Resolve alias chains deterministically
+	var aliasKeys []string
+	for alias := range rawAliases {
+		aliasKeys = append(aliasKeys, alias)
+	}
+	sort.Strings(aliasKeys)
+
 	changed := true
 	for changed {
 		changed = false
-		for alias, target := range rawAliases {
+		for _, alias := range aliasKeys {
+			target := rawAliases[alias]
 			if _, exists := env.primitives[alias]; !exists {
 				if size, ok := env.primitives[target]; ok {
 					env.primitives[alias] = size
@@ -160,8 +182,22 @@ func parsePackages(pkgs map[string]*ast.Package) (string, []StructInfo, error) {
 	var packageName string
 	var structs []StructInfo
 
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
+	var pkgNames []string
+	for name := range pkgs {
+		pkgNames = append(pkgNames, name)
+	}
+	sort.Strings(pkgNames)
+
+	for _, pName := range pkgNames {
+		pkg := pkgs[pName]
+		var fileNames []string
+		for fname := range pkg.Files {
+			fileNames = append(fileNames, fname)
+		}
+		sort.Strings(fileNames)
+
+		for _, fname := range fileNames {
+			file := pkg.Files[fname]
 			for _, decl := range file.Decls {
 				genDecl, ok := decl.(*ast.GenDecl)
 				if !ok || genDecl.Tok != token.TYPE {
@@ -183,6 +219,9 @@ func parsePackages(pkgs map[string]*ast.Package) (string, []StructInfo, error) {
 					continue
 				}
 
+				if packageName != "" && packageName != pkg.Name {
+					return "", nil, fmt.Errorf("multiple packages with //litz:generate found (%s and %s); specify a single package", packageName, pkg.Name)
+				}
 				packageName = pkg.Name
 
 				for _, spec := range genDecl.Specs {

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"strings"
 	"testing"
 )
@@ -70,6 +72,62 @@ func TestGenerator_ParseAndGenerate(t *testing.T) {
 	// Verify build tags are generated at the very top
 	if !strings.HasPrefix(codeStr, "//go:build ") {
 		t.Error("Generated code missing go:build constraint header")
+	}
+}
+
+func TestGenerator_CheckedInFilesAreUpToDate(t *testing.T) {
+	// 1. Verify root litz_gen_test.go matches fresh generator output
+	pkgName, structs, err := parseDir("../..")
+	if err != nil {
+		t.Fatalf("parseDir(../..) failed: %v", err)
+	}
+	rootGenerated, err := generateCode(pkgName, structs)
+	if err != nil {
+		t.Fatalf("generateCode for root failed: %v", err)
+	}
+	rootCheckedIn, err := os.ReadFile("../../litz_gen_test.go")
+	if err != nil {
+		t.Fatalf("reading ../../litz_gen_test.go failed: %v", err)
+	}
+	if !bytes.Equal(rootGenerated, rootCheckedIn) {
+		t.Errorf("Checked-in litz_gen_test.go differs from fresh generator output. Run 'go run ./cmd/litz-gen -dir . -out litz_gen_test.go'")
+	}
+
+	// 2. Verify benchmark/bench_litz_gen.go matches fresh generator output
+	pkgNameBench, structsBench, err := parseDir("../../benchmark")
+	if err != nil {
+		t.Fatalf("parseDir(../../benchmark) failed: %v", err)
+	}
+	benchGenerated, err := generateCode(pkgNameBench, structsBench)
+	if err != nil {
+		t.Fatalf("generateCode for benchmark failed: %v", err)
+	}
+	benchCheckedIn, err := os.ReadFile("../../benchmark/bench_litz_gen.go")
+	if err != nil {
+		t.Fatalf("reading ../../benchmark/bench_litz_gen.go failed: %v", err)
+	}
+	if !bytes.Equal(benchGenerated, benchCheckedIn) {
+		t.Errorf("Checked-in benchmark/bench_litz_gen.go differs from fresh generator output. Run 'go run ./cmd/litz-gen -dir ./benchmark -out bench_litz_gen.go'")
+	}
+}
+
+func TestGenerator_Determinism(t *testing.T) {
+	pkgName, structs, err := parseDir("../..")
+	if err != nil {
+		t.Fatalf("parseDir failed: %v", err)
+	}
+
+	gen1, err := generateCode(pkgName, structs)
+	if err != nil {
+		t.Fatalf("gen1 failed: %v", err)
+	}
+	gen2, err := generateCode(pkgName, structs)
+	if err != nil {
+		t.Fatalf("gen2 failed: %v", err)
+	}
+
+	if !bytes.Equal(gen1, gen2) {
+		t.Fatalf("generateCode is non-deterministic across successive runs")
 	}
 }
 

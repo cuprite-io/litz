@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.3.3"
+const Version = "v0.4.0"
 
 // HIBI Type Constants
 const (
@@ -50,11 +50,16 @@ var (
 // to prevent stack exhaustion from cyclic or maliciously crafted payloads.
 const DefaultMaxDepth = 64
 
-// AlignedBuffer allocates a byte slice. Go's runtime allocator aligns heap
-// allocations to 8-byte boundaries automatically for sizes >= 8 bytes.
+// AlignedBuffer allocates an 8-byte aligned byte slice. Go's runtime allocator
+// aligns heap allocations to 8-byte boundaries automatically for sizes >= 8 bytes.
+// For size == 0, an empty non-nil slice is returned. If size < 0 or size exceeds
+// integer allocation limits (size > math.MaxInt - 7), nil is returned.
 func AlignedBuffer(size int) []byte {
-	if size <= 0 || uint64(size)+7 > uint64(math.MaxInt) {
+	if size < 0 || uint64(size) > uint64(math.MaxInt)-7 {
 		return nil
+	}
+	if size == 0 {
+		return []byte{}
 	}
 	u64Slice := make([]uint64, (size+7)/8)
 	return unsafe.Slice((*byte)(unsafe.Pointer(&u64Slice[0])), len(u64Slice)*8)[:size]
@@ -85,55 +90,89 @@ func EnsureAligned(buf []byte) []byte {
 	return CloneAligned(buf)
 }
 
-// Pool is a wrapper around sync.Pool for reusing serialization buffers.
+// DefaultPoolMaxCap is the default maximum buffer capacity (16 MiB) retained in a Pool.
+// Buffers larger than this capacity are released to the garbage collector upon Put
+// to prevent memory bloat during massive payload spikes.
+const DefaultPoolMaxCap = 16 * 1024 * 1024
+
+// Pool is a wrapper around sync.Pool for reusing 8-byte aligned serialization buffers.
 type Pool struct {
 	pool        sync.Pool
 	initialSize int
+	maxCap      int
+	zeroOnPut   bool
 }
 
+// NewPool creates a buffer pool with the specified initial buffer size and DefaultPoolMaxCap.
 func NewPool(initialSize int) *Pool {
+	return NewPoolWithMaxCap(initialSize, DefaultPoolMaxCap)
+}
+
+// NewPoolWithMaxCap creates a buffer pool with a custom initial size and maximum retention capacity.
+func NewPoolWithMaxCap(initialSize, maxCap int) *Pool {
 	if initialSize <= 0 {
 		initialSize = 2048
 	}
-	return &Pool{
+	if maxCap <= 0 {
+		maxCap = DefaultPoolMaxCap
+	}
+	p := &Pool{
 		initialSize: initialSize,
-		pool: sync.Pool{
-			New: func() any {
-				buf := AlignedBuffer(initialSize)
-				return &buf
-			},
+		maxCap:      maxCap,
+	}
+	p.pool = sync.Pool{
+		New: func() any {
+			buf := AlignedBuffer(p.initialSize)
+			return &buf
 		},
 	}
+	return p
 }
 
+// SetZeroOnPut enables or disables zeroing out buffer memory upon Put.
+// This is an opt-in security setting for multi-tenant or sensitive pipelines.
+func (p *Pool) SetZeroOnPut(enable bool) {
+	p.zeroOnPut = enable
+}
+
+// Get returns a pointer to an 8-byte aligned buffer with length minSize.
+// If minSize is negative or overflows integer allocation limits, Get returns nil.
 func (p *Pool) Get(minSize int) *[]byte {
+	if minSize < 0 || uint64(minSize) > uint64(math.MaxInt)-7 {
+		return nil
+	}
 	bufPtr := p.pool.Get().(*[]byte)
 	if cap(*bufPtr) < minSize {
 		newSize := minSize
-		if minSize < 1024*1024 { // Up to 1MB, double size
+		if minSize < 1024*1024 && minSize <= math.MaxInt/2 { // Up to 1MB, double size
 			newSize = minSize * 2
 		}
 		newBuf := AlignedBuffer(newSize)
-		return &newBuf
+		if newBuf == nil {
+			return nil
+		}
+		res := newBuf[:minSize]
+		return &res
 	}
 	*bufPtr = (*bufPtr)[:minSize]
 	return bufPtr
 }
 
 // Put returns a buffer back to the pool.
-// To prevent memory bloat during massive payload spikes, buffers with capacity
-// larger than 16MB are discarded rather than returned to the pool.
-// Additionally, unaligned buffers are safely discarded to ensure recycled buffers
-// maintain strict 8-byte alignment invariants.
-// Note: We accept and return *[]byte (pointer to slice header) rather than []byte
-// to prevent the Go runtime from allocating interface boxing containers on sync.Pool.Put,
-// maintaining true zero-allocation execution on recycled paths.
+// To prevent pool contamination and memory bloat:
+//   - Buffers with capacity smaller than initialSize are discarded.
+//   - Buffers with capacity exceeding maxCap are discarded.
+//   - Unaligned buffers are safely discarded to ensure recycled buffers maintain strict 8-byte alignment.
+// If SetZeroOnPut is enabled, the buffer capacity is zeroed via clear() before recycling.
 func (p *Pool) Put(bufPtr *[]byte) {
-	if bufPtr == nil || cap(*bufPtr) > 16*1024*1024 {
+	if bufPtr == nil || cap(*bufPtr) < p.initialSize || cap(*bufPtr) > p.maxCap {
 		return
 	}
 	if cap(*bufPtr) > 0 && uintptr(unsafe.Pointer(unsafe.SliceData(*bufPtr)))%8 != 0 {
 		return
+	}
+	if p.zeroOnPut {
+		clear((*bufPtr)[:cap(*bufPtr)])
 	}
 	p.pool.Put(bufPtr)
 }

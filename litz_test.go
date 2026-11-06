@@ -1372,6 +1372,98 @@ func TestPoolDiscardsUnalignedBuffer(t *testing.T) {
 	}
 }
 
+func TestAlignedBufferAndPoolHardening(t *testing.T) {
+	t.Run("AlignedBufferEdgeCases", func(t *testing.T) {
+		if buf := litz.AlignedBuffer(-1); buf != nil {
+			t.Errorf("AlignedBuffer(-1) expected nil, got %v", buf)
+		}
+		if buf := litz.AlignedBuffer(math.MaxInt); buf != nil {
+			t.Errorf("AlignedBuffer(math.MaxInt) expected nil, got %v", buf)
+		}
+		if buf := litz.AlignedBuffer(math.MaxInt - 6); buf != nil {
+			t.Errorf("AlignedBuffer(math.MaxInt - 6) expected nil, got %v", buf)
+		}
+		empty := litz.AlignedBuffer(0)
+		if empty == nil || len(empty) != 0 {
+			t.Errorf("AlignedBuffer(0) expected non-nil empty slice, got %v", empty)
+		}
+		valid := litz.AlignedBuffer(100)
+		if valid == nil || len(valid) != 100 {
+			t.Fatalf("AlignedBuffer(100) failed, got len %d", len(valid))
+		}
+		if uintptr(unsafe.Pointer(unsafe.SliceData(valid)))%8 != 0 {
+			t.Errorf("AlignedBuffer(100) is not 8-byte aligned")
+		}
+	})
+
+	t.Run("PoolGetBounds", func(t *testing.T) {
+		p := litz.NewPoolWithMaxCap(512, 1024*1024)
+		if b := p.Get(-1); b != nil {
+			t.Errorf("Pool.Get(-1) expected nil, got %v", b)
+		}
+		if b := p.Get(math.MaxInt); b != nil {
+			t.Errorf("Pool.Get(math.MaxInt) expected nil, got %v", b)
+		}
+		bZero := p.Get(0)
+		if bZero == nil || len(*bZero) != 0 {
+			t.Errorf("Pool.Get(0) expected len 0, got %v", bZero)
+		}
+		bLarge := p.Get(2048)
+		if bLarge == nil || len(*bLarge) != 2048 || cap(*bLarge) < 2048 {
+			t.Errorf("Pool.Get(2048) expected len 2048, got %v", bLarge)
+		}
+	})
+
+	t.Run("PoolPutProtection", func(t *testing.T) {
+		p := litz.NewPoolWithMaxCap(512, 4096)
+
+		// 1. Put(nil) must not panic
+		p.Put(nil)
+
+		// 2. Put undersized buffer (cap < initialSize) is discarded
+		tiny := make([]byte, 100)
+		p.Put(&tiny)
+
+		// 3. Put oversized buffer (cap > maxCap) is discarded
+		huge := litz.AlignedBuffer(8192)
+		p.Put(&huge)
+
+		// 4. Put unaligned buffer is discarded
+		raw := make([]byte, 1024)
+		unaligned := raw[3:]
+		p.Put(&unaligned)
+
+		// Valid Get should return an aligned buffer matching initial size
+		got := p.Get(512)
+		if uintptr(unsafe.Pointer(unsafe.SliceData(*got)))%8 != 0 {
+			t.Errorf("Pool.Get returned unaligned buffer")
+		}
+		if cap(*got) < 512 {
+			t.Errorf("Pool.Get returned undersized buffer: cap %d", cap(*got))
+		}
+	})
+
+	t.Run("PoolZeroOnPut", func(t *testing.T) {
+		p := litz.NewPool(256)
+		p.SetZeroOnPut(true)
+
+		b := p.Get(256)
+		for i := range *b {
+			(*b)[i] = 0xAA
+		}
+
+		// Put it back with zeroOnPut enabled
+		p.Put(b)
+
+		// Verify underlying backing array was zeroed
+		for i := 0; i < cap(*b); i++ {
+			if (*b)[i] != 0 {
+				t.Fatalf("Pool byte at index %d was not zeroed: %x", i, (*b)[i])
+			}
+		}
+	})
+}
+
 func TestSliceSwizzleAlignmentSafety(t *testing.T) {
 	aligned := litz.AlignedBuffer(64)
 	for i := range aligned {
@@ -1736,8 +1828,8 @@ func TestHIBI_4GiB_OverflowClamping(t *testing.T) {
 		if buf := litz.AlignedBuffer(-1); buf != nil {
 			t.Errorf("AlignedBuffer(-1) expected nil, got len %d", len(buf))
 		}
-		if buf := litz.AlignedBuffer(0); buf != nil {
-			t.Errorf("AlignedBuffer(0) expected nil, got len %d", len(buf))
+		if buf := litz.AlignedBuffer(0); buf == nil || len(buf) != 0 {
+			t.Errorf("AlignedBuffer(0) expected non-nil empty slice, got %v", buf)
 		}
 		if buf := litz.AlignedBuffer(math.MaxInt); buf != nil {
 			t.Errorf("AlignedBuffer(math.MaxInt) expected nil, got len %d", len(buf))

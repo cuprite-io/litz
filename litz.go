@@ -15,7 +15,7 @@ import (
 )
 
 // Version is the current version of the Litz serialization library.
-const Version = "v0.4.0"
+const Version = "v0.4.1"
 
 // HIBI Type Constants
 const (
@@ -200,18 +200,36 @@ func NewDynamic(buf []byte, valType uint8) *Dynamic {
 }
 
 func (d *Dynamic) IsNil() bool {
-	return d == nil || len(d.buf) == 0
+	if d == nil || d.valType == TypeNull {
+		return true
+	}
+	switch d.valType {
+	case TypeString:
+		return false
+	case TypeBytes:
+		return d.buf == nil
+	case TypeInt, TypeUint, TypeFloat:
+		return len(d.buf) < 8
+	case TypeBool:
+		return len(d.buf) < 1
+	case TypeMap:
+		return len(d.buf) < 4
+	case TypeSlice:
+		return len(d.buf) < 8
+	default:
+		return len(d.buf) == 0
+	}
 }
 
 func (d *Dynamic) Raw() []byte {
-	if d.IsNil() {
+	if d == nil || d.valType == TypeNull {
 		return nil
 	}
 	return d.buf
 }
 
 func (d *Dynamic) Type() uint8 {
-	if d.IsNil() {
+	if d == nil {
 		return TypeNull
 	}
 	return d.valType
@@ -236,6 +254,9 @@ func (d *Dynamic) Keys() []string {
 		return nil
 	}
 	numEntries := int(*(*uint32)(unsafe.Pointer(&d.buf[0])))
+	if numEntries == 0 {
+		return []string{}
+	}
 	maxEntries := (len(d.buf) - 4) / 16
 	if numEntries > maxEntries {
 		return nil
@@ -441,7 +462,7 @@ func (d *Dynamic) Bool() bool {
 
 // String returns the value as a string (zero-copy pointer casting).
 func (d *Dynamic) String() string {
-	if d.IsNil() || d.valType != TypeString || len(d.buf) == 0 {
+	if d == nil || d.valType != TypeString || len(d.buf) == 0 {
 		return ""
 	}
 	return unsafe.String(&d.buf[0], len(d.buf))
@@ -449,7 +470,7 @@ func (d *Dynamic) String() string {
 
 // Bytes returns the underlying byte slice.
 func (d *Dynamic) Bytes() []byte {
-	if d.IsNil() || d.valType != TypeBytes {
+	if d == nil || d.valType != TypeBytes || d.buf == nil {
 		return nil
 	}
 	return d.buf
@@ -478,8 +499,11 @@ func (d *Dynamic) Slice() []*Dynamic {
 		return nil
 	}
 	numElements := *(*uint32)(unsafe.Pointer(&d.buf[0]))
-	if numElements == 0 || numElements > math.MaxInt32 {
+	if numElements > math.MaxInt32 {
 		return nil
+	}
+	if numElements == 0 {
+		return []*Dynamic{}
 	}
 	maxElements := (len(d.buf) - 8) / 8
 	if int(numElements) > maxElements {
@@ -574,7 +598,7 @@ func marshalAnyWithDepth(v any, depth int) ([]byte, uint8, error) {
 		return nil, TypeNull, ErrMaxDepthExceeded
 	}
 	if v == nil {
-		return []byte{}, TypeNull, nil
+		return nil, TypeNull, nil
 	}
 
 	switch val := v.(type) {
@@ -640,6 +664,9 @@ func marshalAnyWithDepth(v any, depth int) ([]byte, uint8, error) {
 		copy(buf, val)
 		return buf, TypeString, nil
 	case []byte:
+		if val == nil {
+			return nil, TypeNull, nil
+		}
 		if uint64(len(val)) > math.MaxUint32 {
 			return nil, TypeNull, ErrSizeOverflow
 		}
@@ -655,7 +682,12 @@ func marshalAnyWithDepth(v any, depth int) ([]byte, uint8, error) {
 		copy(buf, val[:])
 		return buf, TypeBytes, nil
 	case *Dynamic:
-		if val == nil {
+		if val == nil || val.valType == TypeNull {
+			return nil, TypeNull, nil
+		}
+		return val.buf, val.valType, nil
+	case Dynamic:
+		if val.valType == TypeNull {
 			return nil, TypeNull, nil
 		}
 		return val.buf, val.valType, nil
@@ -776,8 +808,9 @@ func marshalMap(m map[string]any, depth int) ([]byte, error) {
 func marshalSlice(rv reflect.Value, depth int) ([]byte, error) {
 	numElements := rv.Len()
 	if numElements == 0 {
-		buf := make([]byte, 4)
+		buf := make([]byte, 8)
 		*(*uint32)(unsafe.Pointer(&buf[0])) = 0
+		buf[4] = TypeNull
 		return buf, nil
 	}
 
@@ -900,7 +933,7 @@ func (d Dynamic) interfaceValue() any {
 }
 
 func (d Dynamic) interfaceValueWithDepth(depth int) any {
-	if depth > DefaultMaxDepth || len(d.buf) == 0 {
+	if depth > DefaultMaxDepth || d.valType == TypeNull {
 		return nil
 	}
 	switch d.valType {

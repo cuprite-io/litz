@@ -1998,3 +1998,178 @@ func TestHIBI_4GiB_OverflowClamping(t *testing.T) {
 		}
 	})
 }
+
+func TestEmptyDynamicTypesPreserved(t *testing.T) {
+	t.Run("DirectMarshalEmptyTypes", func(t *testing.T) {
+		// Empty string
+		strBuf, strType, err := litz.MarshalAny("")
+		if err != nil {
+			t.Fatalf("MarshalAny(\"\") failed: %v", err)
+		}
+		if strType != litz.TypeString {
+			t.Errorf("expected TypeString for \"\", got %d", strType)
+		}
+		dynStr := litz.NewDynamic(strBuf, strType)
+		if dynStr.Type() != litz.TypeString {
+			t.Errorf("dynStr.Type() expected TypeString, got %d", dynStr.Type())
+		}
+		if dynStr.IsNil() {
+			t.Errorf("dynStr.IsNil() expected false for \"\"")
+		}
+		if dynStr.String() != "" {
+			t.Errorf("dynStr.String() expected \"\", got %q", dynStr.String())
+		}
+		if iface := dynStr.Interface(); iface != "" {
+			t.Errorf("dynStr.Interface() expected \"\", got %v (%T)", iface, iface)
+		}
+
+		// Empty byte slice
+		bytesBuf, bytesType, err := litz.MarshalAny([]byte{})
+		if err != nil {
+			t.Fatalf("MarshalAny([]byte{}) failed: %v", err)
+		}
+		if bytesType != litz.TypeBytes {
+			t.Errorf("expected TypeBytes for []byte{}, got %d", bytesType)
+		}
+		dynBytes := litz.NewDynamic(bytesBuf, bytesType)
+		if dynBytes.Type() != litz.TypeBytes {
+			t.Errorf("dynBytes.Type() expected TypeBytes, got %d", dynBytes.Type())
+		}
+		if dynBytes.IsNil() {
+			t.Errorf("dynBytes.IsNil() expected false for []byte{}")
+		}
+		if iface := dynBytes.Interface(); iface == nil {
+			t.Errorf("dynBytes.Interface() expected non-nil for []byte{}")
+		} else if b, ok := iface.([]byte); !ok || len(b) != 0 {
+			t.Errorf("dynBytes.Interface() expected empty []byte, got %v (%T)", iface, iface)
+		}
+
+		// Empty map
+		mapBuf, mapType, err := litz.MarshalAny(map[string]any{})
+		if err != nil {
+			t.Fatalf("MarshalAny(empty map) failed: %v", err)
+		}
+		if mapType != litz.TypeMap {
+			t.Errorf("expected TypeMap for empty map, got %d", mapType)
+		}
+		dynMap := litz.NewDynamic(mapBuf, mapType)
+		if dynMap.Type() != litz.TypeMap {
+			t.Errorf("dynMap.Type() expected TypeMap, got %d", dynMap.Type())
+		}
+		if dynMap.IsNil() {
+			t.Errorf("dynMap.IsNil() expected false for empty map")
+		}
+		if keys := dynMap.Keys(); keys == nil || len(keys) != 0 {
+			t.Errorf("dynMap.Keys() expected empty []string, got %v", keys)
+		}
+		if iface := dynMap.Interface(); iface == nil {
+			t.Errorf("dynMap.Interface() expected non-nil for empty map")
+		} else if m, ok := iface.(map[string]any); !ok || len(m) != 0 {
+			t.Errorf("dynMap.Interface() expected empty map[string]any, got %v (%T)", iface, iface)
+		}
+
+		// Empty slice
+		sliceBuf, sliceType, err := litz.MarshalAny([]any{})
+		if err != nil {
+			t.Fatalf("MarshalAny(empty slice) failed: %v", err)
+		}
+		if sliceType != litz.TypeSlice {
+			t.Errorf("expected TypeSlice for empty slice, got %d", sliceType)
+		}
+		dynSlice := litz.NewDynamic(sliceBuf, sliceType)
+		if dynSlice.Type() != litz.TypeSlice {
+			t.Errorf("dynSlice.Type() expected TypeSlice, got %d", dynSlice.Type())
+		}
+		if dynSlice.IsNil() {
+			t.Errorf("dynSlice.IsNil() expected false for empty slice")
+		}
+		if s := dynSlice.Slice(); s == nil || len(s) != 0 {
+			t.Errorf("dynSlice.Slice() expected empty []*Dynamic, got %v", s)
+		}
+		if iface := dynSlice.Interface(); iface == nil {
+			t.Errorf("dynSlice.Interface() expected non-nil for empty slice")
+		} else if s, ok := iface.([]any); !ok || len(s) != 0 {
+			t.Errorf("dynSlice.Interface() expected empty []any, got %v (%T)", iface, iface)
+		}
+	})
+
+	t.Run("NilMarshalPreservesNull", func(t *testing.T) {
+		nilBuf, nilType, err := litz.MarshalAny(nil)
+		if err != nil {
+			t.Fatalf("MarshalAny(nil) failed: %v", err)
+		}
+		if nilType != litz.TypeNull || nilBuf != nil {
+			t.Errorf("expected TypeNull and nil buf for nil, got type %d, buf %v", nilType, nilBuf)
+		}
+		dynNil := litz.NewDynamic(nilBuf, nilType)
+		if !dynNil.IsNil() {
+			t.Errorf("dynNil.IsNil() expected true")
+		}
+		if dynNil.Interface() != nil {
+			t.Errorf("dynNil.Interface() expected nil")
+		}
+
+		nilBytesBuf, nilBytesType, err := litz.MarshalAny([]byte(nil))
+		if err != nil {
+			t.Fatalf("MarshalAny([]byte(nil)) failed: %v", err)
+		}
+		if nilBytesType != litz.TypeNull || nilBytesBuf != nil {
+			t.Errorf("expected TypeNull for []byte(nil), got type %d", nilBytesType)
+		}
+	})
+
+	t.Run("StructRoundTripEmptyDynamic", func(t *testing.T) {
+		// 1. Metadata = ""
+		pStr := &NestedPayload{Metadata: ""}
+		bufStr, err := MarshalNestedPayload(pStr, nil)
+		if err != nil {
+			t.Fatalf("MarshalNestedPayload(\"\") failed: %v", err)
+		}
+		var outStr NestedPayload
+		if err := UnmarshalNestedPayload(bufStr, &outStr); err != nil {
+			t.Fatalf("UnmarshalNestedPayload failed: %v", err)
+		}
+		dynOutStr, ok := outStr.Metadata.(*litz.Dynamic)
+		if !ok || dynOutStr == nil {
+			t.Fatalf("expected *litz.Dynamic for empty string metadata, got %T (%v)", outStr.Metadata, outStr.Metadata)
+		}
+		if dynOutStr.Type() != litz.TypeString || dynOutStr.String() != "" {
+			t.Errorf("expected TypeString and \"\", got type %d, str %q", dynOutStr.Type(), dynOutStr.String())
+		}
+
+		// 2. Metadata = []byte{}
+		pBytes := &NestedPayload{Metadata: []byte{}}
+		bufBytes, err := MarshalNestedPayload(pBytes, nil)
+		if err != nil {
+			t.Fatalf("MarshalNestedPayload([]byte{}) failed: %v", err)
+		}
+		var outBytes NestedPayload
+		if err := UnmarshalNestedPayload(bufBytes, &outBytes); err != nil {
+			t.Fatalf("UnmarshalNestedPayload failed: %v", err)
+		}
+		dynOutBytes, ok := outBytes.Metadata.(*litz.Dynamic)
+		if !ok || dynOutBytes == nil {
+			t.Fatalf("expected *litz.Dynamic for []byte{} metadata, got %T (%v)", outBytes.Metadata, outBytes.Metadata)
+		}
+		if dynOutBytes.Type() != litz.TypeBytes {
+			t.Errorf("expected TypeBytes, got %d", dynOutBytes.Type())
+		}
+		if dynOutBytes.Bytes() == nil || len(dynOutBytes.Bytes()) != 0 {
+			t.Errorf("expected empty []byte, got %v", dynOutBytes.Bytes())
+		}
+
+		// 3. Metadata = nil
+		pNil := &NestedPayload{Metadata: nil}
+		bufNil, err := MarshalNestedPayload(pNil, nil)
+		if err != nil {
+			t.Fatalf("MarshalNestedPayload(nil) failed: %v", err)
+		}
+		var outNil NestedPayload
+		if err := UnmarshalNestedPayload(bufNil, &outNil); err != nil {
+			t.Fatalf("UnmarshalNestedPayload failed: %v", err)
+		}
+		if outNil.Metadata != nil {
+			t.Errorf("expected nil Metadata for nil input, got %v (%T)", outNil.Metadata, outNil.Metadata)
+		}
+	})
+}

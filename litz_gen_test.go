@@ -573,17 +573,23 @@ func marshalNestedPayloadWithDepth(u *NestedPayload, buf []byte, depth int) ([]b
 		mirror.Profile = 0
 	}
 
-	if MetadataLen > 0 {
-		padOffset := (currentOffset + 7) &^ 7
-		if padOffset > currentOffset {
-			clear(buf[currentOffset:padOffset])
+	if MetadataType != litz.TypeNull {
+		if MetadataLen > 0 {
+			padOffset := (currentOffset + 7) &^ 7
+			if padOffset > currentOffset {
+				clear(buf[currentOffset:padOffset])
+			}
+			currentOffset = padOffset
+			mirror.Metadata.offset = currentOffset
+			mirror.Metadata.length = uint32(MetadataLen)
+			mirror.Metadata.valType = uint32(MetadataType)
+			copy(buf[currentOffset:], MetadataBytes)
+			currentOffset += uintptr(MetadataLen)
+		} else {
+			mirror.Metadata.offset = 0
+			mirror.Metadata.length = 0
+			mirror.Metadata.valType = uint32(MetadataType)
 		}
-		currentOffset = padOffset
-		mirror.Metadata.offset = currentOffset
-		mirror.Metadata.length = uint32(MetadataLen)
-		mirror.Metadata.valType = uint32(MetadataType)
-		copy(buf[currentOffset:], MetadataBytes)
-		currentOffset += uintptr(MetadataLen)
 	} else {
 		mirror.Metadata.offset = 0
 		mirror.Metadata.length = 0
@@ -766,8 +772,12 @@ func unmarshalNestedPayloadWithDepth(buf []byte, u *NestedPayload, depth int) er
 		}
 	}
 	if 8+unsafe.Offsetof(mirror.Metadata)+unsafe.Sizeof(mirror.Metadata) <= uintptr(len(buf)) {
-		if mirror.Metadata.length > 0 {
-			u.Metadata = litz.NewDynamic(buf[mirror.Metadata.offset:mirror.Metadata.offset+uintptr(mirror.Metadata.length)], uint8(mirror.Metadata.valType))
+		if mirror.Metadata.valType != 0 {
+			if mirror.Metadata.length > 0 {
+				u.Metadata = litz.NewDynamic(buf[mirror.Metadata.offset:mirror.Metadata.offset+uintptr(mirror.Metadata.length)], uint8(mirror.Metadata.valType))
+			} else {
+				u.Metadata = litz.NewDynamic([]byte{}, uint8(mirror.Metadata.valType))
+			}
 		} else {
 			u.Metadata = nil
 		}
@@ -899,8 +909,12 @@ func unmarshalNestedPayloadStrictWithDepth(buf []byte, u *NestedPayload, depth i
 	} else {
 		u.Profile = nil
 	}
-	if mirror.Metadata.length > 0 {
-		u.Metadata = litz.NewDynamic(buf[mirror.Metadata.offset:mirror.Metadata.offset+uintptr(mirror.Metadata.length)], uint8(mirror.Metadata.valType))
+	if mirror.Metadata.valType != 0 {
+		if mirror.Metadata.length > 0 {
+			u.Metadata = litz.NewDynamic(buf[mirror.Metadata.offset:mirror.Metadata.offset+uintptr(mirror.Metadata.length)], uint8(mirror.Metadata.valType))
+		} else {
+			u.Metadata = litz.NewDynamic([]byte{}, uint8(mirror.Metadata.valType))
+		}
 	} else {
 		u.Metadata = nil
 	}
